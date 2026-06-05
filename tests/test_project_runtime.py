@@ -2208,10 +2208,18 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
 
     def test_version_popover_mentions_docker_only_online_update_setup(self):
         layout_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')
+        navbar_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '02-navbar.css').read_text(encoding='utf-8')
+        responsive_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '08-responsive.css').read_text(encoding='utf-8')
 
         self.assertIn('仅 Docker 版本支持在线更新', layout_html)
         self.assertIn('README 中的「启用界面 Docker 在线更新」', layout_html)
         self.assertIn('https://github.com/devmc12/outlook-email-manager#readme', layout_html)
+        self.assertIn('Forked from', layout_html)
+        self.assertIn('https://github.com/assast/outlookEmail', layout_html)
+        self.assertIn('width: 360px;', navbar_css)
+        self.assertIn('position: fixed;', responsive_css)
+        self.assertIn('right: 12px;', responsive_css)
+        self.assertIn('width: auto;', responsive_css)
 
     def test_version_chip_shows_upgrade_badge_markup_and_logic(self):
         layout_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')

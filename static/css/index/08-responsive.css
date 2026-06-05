@@ -53,8 +53,13 @@
             }
 
             .app-version-popover {
-                left: 0;
-                width: min(240px, calc(100vw - 24px));
+                position: fixed;
+                top: 54px;
+                left: 12px;
+                right: 12px;
+                width: auto;
+                max-height: calc(100vh - 68px);
+                overflow-y: auto;
             }
 
             .app-version-chip {
