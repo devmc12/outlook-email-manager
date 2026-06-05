@@ -6,6 +6,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Added
+- Web 分组面板新增桌面端折叠/展开控件，悬停分组区域时显示窄折叠条，收起后在屏幕左侧显示贴边展开条，并记住用户折叠状态；移动端继续保留原有抽屉交互。
+
 ## [2.0.63+1] - 2026-06-06
 
 ### Added
