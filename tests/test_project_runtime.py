@@ -1898,6 +1898,61 @@ class FrontendColorPickerTests(unittest.TestCase):
         )
 
 
+class FrontendGroupPanelCollapseTests(unittest.TestCase):
+    def test_group_panel_collapse_controls_are_present(self):
+        layout_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')
+
+        self.assertIn('id="groupPanelCollapseHandle"', layout_html)
+        self.assertIn('aria-label="折叠分组面板"', layout_html)
+        self.assertIn('onclick="collapseGroupPanel()"', layout_html)
+        self.assertIn('id="groupPanelExpandHandle"', layout_html)
+        self.assertIn('aria-label="展开分组面板"', layout_html)
+        self.assertIn('onclick="expandGroupPanel()" hidden', layout_html)
+        self.assertLess(layout_html.index('id="groupPanel"'), layout_html.index('id="groupPanelCollapseHandle"'))
+        self.assertLess(layout_html.index('id="groupPanelCollapseHandle"'), layout_html.index('id="groupPanelExpandHandle"'))
+
+    def test_group_panel_collapse_uses_desktop_only_animated_layout(self):
+        layout_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '03-layout.css').read_text(encoding='utf-8')
+        responsive_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '08-responsive.css').read_text(encoding='utf-8')
+
+        self.assertIn('--group-panel-width: 200px;', layout_css)
+        self.assertIn('@media (min-width: 769px)', layout_css)
+        self.assertIn('.group-panel:hover + .group-panel-collapse-handle', layout_css)
+        self.assertIn('.main-container.is-group-panel-collapsed .group-panel', layout_css)
+        self.assertIn('left: calc(var(--group-panel-width) - 1px);', layout_css)
+        self.assertIn('width: 13px;', layout_css)
+        self.assertIn('width: 0;', layout_css)
+        self.assertIn('border-right-width: 0;', layout_css)
+        self.assertIn('.group-panel-expand-handle[hidden]', layout_css)
+        self.assertIn('--group-panel-width: 180px;', responsive_css)
+        self.assertIn('--group-panel-width: 160px;', responsive_css)
+        self.assertIn('width: var(--group-panel-width);', responsive_css)
+        self.assertLess(
+            layout_css.index('.group-panel-collapse-handle {'),
+            layout_css.index('.main-container.is-group-panel-collapsed .group-panel')
+        )
+
+    def test_group_panel_collapse_state_is_persisted_and_responsive(self):
+        core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+
+        init_start = core_js.index("document.addEventListener('DOMContentLoaded'")
+        init_end = core_js.index('function handleExtensionLaunchHash', init_start)
+        init_block = core_js[init_start:init_end]
+
+        self.assertIn("GROUP_PANEL_COLLAPSED_STORAGE_KEY = 'outlook_group_panel_collapsed'", core_js)
+        self.assertIn('function setGroupPanelCollapsed(collapsed, persist = true)', core_js)
+        self.assertIn('function syncGroupPanelCollapseFromStorage()', core_js)
+        self.assertIn('function collapseGroupPanel()', core_js)
+        self.assertIn('function expandGroupPanel()', core_js)
+        self.assertIn('window.collapseGroupPanel = collapseGroupPanel;', core_js)
+        self.assertIn('window.expandGroupPanel = expandGroupPanel;', core_js)
+        self.assertIn("mainContainer?.classList.toggle('is-group-panel-collapsed', shouldCollapse);", core_js)
+        self.assertIn('collapseHandle.hidden = mobileActive || shouldCollapse;', core_js)
+        self.assertIn('expandHandle.hidden = !shouldCollapse;', core_js)
+        self.assertIn('syncGroupPanelCollapseFromStorage();', core_js)
+        self.assertIn('initGroupPanelCollapse();', init_block)
+
+
 class FrontendEmailListSecurityTests(unittest.TestCase):
     def setUp(self):
         self.emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')

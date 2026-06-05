@@ -54,6 +54,7 @@
         const VERSION_STATUS_REQUEST_TIMEOUT_MS = 12000;
         const DOCKER_UPDATE_REQUEST_TIMEOUT_MS = 20000;
         const UPDATE_NOTICE_SEEN_VERSION_KEY = 'outlook_update_notice_seen_latest_version';
+        const GROUP_PANEL_COLLAPSED_STORAGE_KEY = 'outlook_group_panel_collapsed';
         const DEFAULT_APP_TIME_ZONE = 'Asia/Shanghai';
         const FALLBACK_APP_TIME_ZONES = [
             'Asia/Shanghai',
@@ -105,6 +106,82 @@
 
         function isMobileLayout() {
             return window.matchMedia('(max-width: 768px)').matches;
+        }
+
+        function readStoredGroupPanelCollapsed() {
+            try {
+                return localStorage.getItem(GROUP_PANEL_COLLAPSED_STORAGE_KEY) === 'true';
+            } catch (error) {
+                return false;
+            }
+        }
+
+        function storeGroupPanelCollapsed(collapsed) {
+            try {
+                localStorage.setItem(GROUP_PANEL_COLLAPSED_STORAGE_KEY, collapsed ? 'true' : 'false');
+            } catch (error) {
+                // localStorage may be unavailable in restricted browser contexts.
+            }
+        }
+
+        function setGroupPanelCollapsed(collapsed, persist = true) {
+            const mobileActive = isMobileLayout();
+            const shouldCollapse = !!collapsed && !mobileActive;
+            const mainContainer = document.querySelector('.main-container');
+            const groupPanel = document.getElementById('groupPanel');
+            const collapseHandle = document.getElementById('groupPanelCollapseHandle');
+            const expandHandle = document.getElementById('groupPanelExpandHandle');
+
+            mainContainer?.classList.toggle('is-group-panel-collapsed', shouldCollapse);
+
+            if (groupPanel) {
+                groupPanel.setAttribute('aria-hidden', shouldCollapse ? 'true' : 'false');
+                if ('inert' in groupPanel) {
+                    groupPanel.inert = shouldCollapse;
+                }
+            }
+
+            if (collapseHandle) {
+                collapseHandle.hidden = mobileActive || shouldCollapse;
+                collapseHandle.setAttribute('aria-expanded', shouldCollapse ? 'false' : 'true');
+            }
+
+            if (expandHandle) {
+                expandHandle.hidden = !shouldCollapse;
+                expandHandle.setAttribute('aria-expanded', shouldCollapse ? 'false' : 'true');
+            }
+
+            if (persist) {
+                storeGroupPanelCollapsed(shouldCollapse);
+            }
+
+            scheduleEmailListLoadCheck(260);
+        }
+
+        function syncGroupPanelCollapseFromStorage() {
+            setGroupPanelCollapsed(readStoredGroupPanelCollapsed(), false);
+        }
+
+        function collapseGroupPanel() {
+            const groupPanel = document.getElementById('groupPanel');
+            const collapseHandle = document.getElementById('groupPanelCollapseHandle');
+            const focusWasInsideGroupPanel = (!!groupPanel && groupPanel.contains(document.activeElement))
+                || document.activeElement === collapseHandle;
+
+            setGroupPanelCollapsed(true);
+
+            if (focusWasInsideGroupPanel) {
+                document.getElementById('groupPanelExpandHandle')?.focus({ preventScroll: true });
+            }
+        }
+
+        function expandGroupPanel() {
+            setGroupPanelCollapsed(false);
+            document.getElementById('groupPanelCollapseHandle')?.focus({ preventScroll: true });
+        }
+
+        function initGroupPanelCollapse() {
+            syncGroupPanelCollapseFromStorage();
         }
 
         function isValidAppTimeZone(timeZone) {
@@ -935,6 +1012,8 @@
         window.toggleVersionPopover = toggleVersionPopover;
         window.copyAppVersion = copyAppVersion;
         window.startDockerUpdate = startDockerUpdate;
+        window.collapseGroupPanel = collapseGroupPanel;
+        window.expandGroupPanel = expandGroupPanel;
 
         function toggleNavbarActionsMenu() {
             if (!isMobileLayout()) return;
@@ -976,6 +1055,8 @@
         }
 
         function syncResponsiveUI() {
+            syncGroupPanelCollapseFromStorage();
+
             if (!isMobileLayout()) {
                 closeMobilePanels();
                 closeNavbarActionsMenu();
@@ -1144,6 +1225,7 @@
             document.addEventListener('click', handleGlobalChromeClick);
             document.addEventListener('click', handleGlobalTagFilterClick);
             document.addEventListener('click', handleGlobalImportTagClick);
+            initGroupPanelCollapse();
             document.getElementById('importImapHost')?.addEventListener('input', updateImportHint);
             document.getElementById('importImapPort')?.addEventListener('input', updateImportHint);
             document.getElementById('oauthEmailInput')?.addEventListener('input', invalidateRefreshTokenPreview);
