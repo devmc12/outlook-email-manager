@@ -282,6 +282,10 @@ def send_forward_wecom_with_config(config: Dict[str, Any], text: str) -> bool:
     return response.ok
 
 
+def get_forward_account_group_name(account: Dict[str, Any]) -> str:
+    return str(account.get('group_name') or '').strip()
+
+
 def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any]) -> tuple[str, str, str, str]:
     subject = email_detail.get('subject') or '无主题'
     sender = email_detail.get('from') or '未知'
@@ -289,16 +293,22 @@ def build_forward_payload(account: Dict[str, Any], email_detail: Dict[str, Any])
     body = email_detail.get('body') or ''
     body_text = strip_html_content(body) if email_detail.get('body_type') == 'html' else strip_html_content(body.replace('<br>', '\n'))
     body_text = body_text[:2000]
+    include_group = get_bool_setting('forward_include_account_group', False)
+    group_name = get_forward_account_group_name(account) if include_group else ''
+    plain_group_line = f"\n分组: {group_name}" if group_name else ''
+    html_group_line = f"<p><strong>分组:</strong> {html.escape(group_name)}</p>" if group_name else ''
+    notification_group_line = f"\n分组: {group_name}" if group_name else ''
 
     title = f"[邮件转发] {subject}"
-    plain = f"账号: {account.get('email','')}\n发件人: {sender}\n时间: {received_at}\n主题: {subject}\n\n{body_text}"
+    plain = f"账号: {account.get('email','')}\n发件人: {sender}\n时间: {received_at}{plain_group_line}\n主题: {subject}\n\n{body_text}"
     html_body = (
         f"<p><strong>账号:</strong> {html.escape(account.get('email', ''))}</p>"
         f"<p><strong>发件人:</strong> {html.escape(sender)}</p>"
         f"<p><strong>时间:</strong> {html.escape(received_at)}</p>"
+        f"{html_group_line}"
         f"<p><strong>主题:</strong> {html.escape(subject)}</p><hr>{body}"
     )
-    telegram_text = f"新邮件转发\n账号: {account.get('email','')}\n发件人: {sender}\n主题: {subject}\n时间: {received_at}\n\n{body_text[:1200]}"
+    telegram_text = f"新邮件转发\n账号: {account.get('email','')}\n发件人: {sender}\n主题: {subject}\n时间: {received_at}{notification_group_line}\n\n{body_text[:1200]}"
     return title, plain, html_body, telegram_text
 
 
@@ -405,7 +415,12 @@ def process_forwarding_job():
                 return
 
             accounts = conn.execute(
-                "SELECT * FROM accounts WHERE status = 'active' AND forward_enabled = 1"
+                '''
+                SELECT a.*, g.name AS group_name, g.color AS group_color
+                FROM accounts a
+                LEFT JOIN groups g ON a.group_id = g.id
+                WHERE a.status = 'active' AND a.forward_enabled = 1
+                '''
             ).fetchall()
             safe_console_print(
                 f"[forward] start job: accounts={len(accounts)} email_enabled={email_enabled} telegram_enabled={telegram_enabled} wecom_enabled={wecom_enabled} account_delay_seconds={account_delay_seconds}"

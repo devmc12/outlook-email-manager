@@ -3195,6 +3195,7 @@ class MultiChannelForwardingTests(unittest.TestCase):
             db.commit()
 
             self.assertTrue(web_outlook_app.set_setting('forward_channels', 'smtp,telegram'))
+            self.assertTrue(web_outlook_app.set_setting('forward_include_account_group', 'false'))
             self.assertTrue(web_outlook_app.set_setting('email_forward_recipient', 'main@example.com'))
             self.assertTrue(web_outlook_app.set_setting('smtp_host', 'smtp.example.com'))
             self.assertTrue(web_outlook_app.set_setting_encrypted('telegram_bot_token', '123456:abcdef'))
@@ -3216,6 +3217,54 @@ class MultiChannelForwardingTests(unittest.TestCase):
                 (self.account_id,),
             )
             db.commit()
+
+    def test_build_forward_payload_omits_group_by_default(self):
+        with self.app.app_context():
+            title, plain, html_body, telegram_text = web_outlook_app.build_forward_payload(
+                {'email': 'multi-channel@example.com', 'group_name': '默认分组'},
+                {
+                    'id': 'message-payload-default',
+                    'subject': 'payload default',
+                    'from': 'sender@example.com',
+                    'date': '2026-04-15T07:00:00Z',
+                    'body': 'hello world',
+                    'body_type': 'text',
+                },
+            )
+
+        self.assertEqual(title, '[邮件转发] payload default')
+        self.assertNotIn('分组:', plain)
+        self.assertNotIn('分组:', html_body)
+        self.assertNotIn('分组:', telegram_text)
+
+    def test_process_forwarding_job_includes_account_group_when_enabled(self):
+        email_item = {
+            'id': 'message-with-group',
+            'folder': 'inbox',
+            'date': '2026-04-15T07:00:00Z',
+        }
+        email_detail = {
+            'id': 'message-with-group',
+            'subject': 'group subject',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T07:00:00Z',
+            'body': 'hello group',
+            'body_type': 'text',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('forward_include_account_group', 'true'))
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail):
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True):
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True) as tg_mock:
+                        web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(tg_mock.call_count, 1)
+        telegram_text = tg_mock.call_args.args[0]
+        self.assertIn('时间: 2026-04-15T07:00:00Z\n分组: 默认分组', telegram_text)
+        self.assertIn('\n\nhello group', telegram_text)
 
     def test_process_forwarding_job_sends_to_all_enabled_channels(self):
         email_item = {

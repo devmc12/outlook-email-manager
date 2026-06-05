@@ -446,6 +446,7 @@ def api_get_settings():
     settings['forward_account_delay_seconds'] = get_setting('forward_account_delay_seconds', '0')
     settings['forward_email_window_minutes'] = get_setting('forward_email_window_minutes', '0')
     settings['forward_include_junkemail'] = get_setting('forward_include_junkemail', 'false')
+    settings['forward_include_account_group'] = get_setting('forward_include_account_group', 'false')
     settings['email_forward_recipient'] = get_setting('email_forward_recipient', '')
     settings['smtp_host'] = get_setting('smtp_host', '')
     settings['smtp_port'] = get_setting('smtp_port', '465')
@@ -755,6 +756,16 @@ def api_update_settings():
                 errors.append('保存转发垃圾箱邮件失败')
         else:
             errors.append('转发垃圾箱邮件必须是 true 或 false')
+
+    if 'forward_include_account_group' in data:
+        include_group = str(data['forward_include_account_group']).lower()
+        if include_group in ('true', 'false'):
+            if set_setting('forward_include_account_group', include_group):
+                updated.append('转发附加邮箱分组')
+            else:
+                errors.append('保存转发附加邮箱分组失败')
+        else:
+            errors.append('转发附加邮箱分组必须是 true 或 false')
 
     if 'forward_channels' in data:
         forward_channels = normalize_forward_channel_settings(data['forward_channels'])

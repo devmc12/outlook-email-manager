@@ -350,6 +350,13 @@
                                     </label>
                                     <div class="form-hint">开启后，垃圾箱的新邮件也会进入轮询。</div>
                                 </div>
+                                <div class="forwarding-inline-control forwarding-inline-control--toggle">
+                                    <label class="settings-toggle settings-toggle--inline forwarding-inline-toggle">
+                                        <input type="checkbox" id="forwardIncludeAccountGroup">
+                                        <span class="form-label">附加邮箱分组</span>
+                                    </label>
+                                    <div class="form-hint">开启后，转发摘要会显示账号所属分组；原邮件正文不改动。</div>
+                                </div>
                             </div>
                             <div class="settings-action-row settings-action-row--toolbar">
                                 <button class="btn btn-primary" type="button" id="triggerForwardingCheckBtn" onclick="triggerForwardingCheck()">手动触发转发检查</button>
