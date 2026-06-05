@@ -31,7 +31,7 @@
 - GitHub Release：标题为 `vX.Y.Z`
 - Windows 桌面压缩包：`OutlookEmail-windows-x64-X.Y.Z.zip`
 - macOS 安装包：`OutlookEmail-macos-x64-X.Y.Z.dmg`、`OutlookEmail-macos-arm64-X.Y.Z.dmg`
-- Docker 镜像：`ghcr.io/assast/outlookemail:vX.Y.Z`
+- Docker 镜像：`ghcr.io/devmc12/outlook-email-manager:vX.Y.Z`
 
 补充说明：
 
@@ -143,7 +143,7 @@ git push origin v2.0.16
 
 工作流会调用 `docker-build-push.yml`，并基于标签 `refs/tags/vX.Y.Z` 构建：
 
-- `ghcr.io/assast/outlookemail:vX.Y.Z`
+- `ghcr.io/devmc12/outlook-email-manager:vX.Y.Z`
 
 ### 6. 发布 GitHub Release
 
@@ -159,7 +159,7 @@ git push origin v2.0.16
 4. GHCR 中可拉取版本镜像：
 
 ```bash
-docker pull ghcr.io/assast/outlookemail:v2.0.15
+docker pull ghcr.io/devmc12/outlook-email-manager:v2.0.15
 ```
 
 5. 如本次版本包含部署或接口变更，抽样验证一台测试环境升级成功。

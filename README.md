@@ -49,7 +49,7 @@ admin123
 
 ```bash
 # 拉取最新镜像
-docker pull ghcr.io/assast/outlookemail:latest
+docker pull ghcr.io/devmc12/outlook-email-manager:latest
 
 # 运行容器
 docker run -d \
@@ -58,14 +58,14 @@ docker run -d \
   -v $(pwd)/data:/app/data \
   -e LOGIN_PASSWORD=admin123 \
   -e SECRET_KEY=your-secret-key-here \
-  ghcr.io/assast/outlookemail:latest
+  ghcr.io/devmc12/outlook-email-manager:latest
 ```
 
 ### 方式四：使用 Python 直接运行
 
 ```bash
-git clone https://github.com/assast/outlookEmail.git
-cd outlookEmail
+git clone https://github.com/devmc12/outlook-email-manager.git
+cd outlook-email-manager
 pip install -r requirements.txt
 export SECRET_KEY=your-secret-key-here
 python web_outlook_app.py
@@ -84,7 +84,7 @@ python web_outlook_app.py
 version: '3.8'
 services:
   outlook-mail-reader:
-    image: ghcr.io/assast/outlookemail:latest
+    image: ghcr.io/devmc12/outlook-email-manager:latest
     container_name: outlook-mail-reader
     ports:
       - "5000:5000"
@@ -116,7 +116,7 @@ docker-compose up -d
 version: '3.8'
 services:
   outlook-mail-reader:
-    image: ghcr.io/assast/outlookemail:latest
+    image: ghcr.io/devmc12/outlook-email-manager:latest
     container_name: outlook-mail-reader
     ports:
       - "5000:5000"
@@ -589,8 +589,8 @@ https://support.google.com/mail/answer/185833?hl=zh-Hans
 欢迎提交 Issue 和 Pull Request！
 
 ```bash
-git clone https://github.com/assast/outlookEmail.git
-cd outlookEmail
+git clone https://github.com/devmc12/outlook-email-manager.git
+cd outlook-email-manager
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -610,7 +610,7 @@ MIT License - 详见 [LICENSE](LICENSE)
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=assast/outlookEmail&type=Date)](https://star-history.com/#assast/outlookEmail&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=devmc12/outlook-email-manager&type=Date)](https://star-history.com/#devmc12/outlook-email-manager&Date)
 
 ---
 

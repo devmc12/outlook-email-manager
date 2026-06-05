@@ -2211,7 +2211,7 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
 
         self.assertIn('仅 Docker 版本支持在线更新', layout_html)
         self.assertIn('README 中的「启用界面 Docker 在线更新」', layout_html)
-        self.assertIn('https://github.com/assast/outlookEmail#readme', layout_html)
+        self.assertIn('https://github.com/devmc12/outlook-email-manager#readme', layout_html)
 
     def test_version_chip_shows_upgrade_badge_markup_and_logic(self):
         layout_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')

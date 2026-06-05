@@ -6,6 +6,16 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.0.63+1] - 2026-06-06
+
+### Added
+- 邮件转发设置新增“附加邮箱分组”开关，开启后 Telegram 和企业微信转发文本会附带账号所属分组，SMTP 转发仅在邮件顶部元信息区附加分组行，不修改原邮件正文内容。
+
+### Changed
+- 默认版本检查仓库切换为 `devmc12/outlook-email-manager`，包括 Release API、远端 `VERSION` 和远端 `CHANGELOG.md`。
+- Web 界面的 GitHub、完整 API 文档和 Docker 在线更新说明链接改为指向 fork 仓库。
+- README、部署、升级、排障和发版文档中的克隆地址与 GHCR 镜像示例改为 `devmc12/outlook-email-manager`。
+
 ## [2.0.63] - 2026-06-04
 
 ### Added

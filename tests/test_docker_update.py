@@ -192,7 +192,7 @@ class DockerUpdateTests(unittest.TestCase):
     def test_classify_watchtower_logs_reports_no_new_image(self):
         success, message = web_outlook_app._classify_watchtower_logs(
             'time="2026-05-06T10:00:00Z" level=info msg="No new images found for /outlook-mail-reader"',
-            'ghcr.io/assast/outlookemail:latest',
+            'ghcr.io/devmc12/outlook-email-manager:latest',
         )
 
         self.assertFalse(success)
@@ -202,11 +202,11 @@ class DockerUpdateTests(unittest.TestCase):
         success, message = web_outlook_app._classify_watchtower_logs(
             (
                 'time="2026-05-06T10:00:00Z" level=info msg="Found new '
-                'ghcr.io/assast/outlookemail:latest image (sha256:abc)"\n'
+                'ghcr.io/devmc12/outlook-email-manager:latest image (sha256:abc)"\n'
                 'time="2026-05-06T10:00:10Z" level=info msg="Stopping /outlook-mail-reader"\n'
                 'time="2026-05-06T10:00:20Z" level=info msg="Session done" Failed=0 Scanned=1 Updated=1 notify=no'
             ),
-            'ghcr.io/assast/outlookemail:latest',
+            'ghcr.io/devmc12/outlook-email-manager:latest',
         )
 
         self.assertTrue(success)
@@ -221,7 +221,7 @@ class DockerUpdateTests(unittest.TestCase):
                 '\u001b[36mFailed\u001b[0m=0 \u001b[36mScanned\u001b[0m=1 '
                 '\u001b[36mUpdated\u001b[0m=0 \u001b[36mnotify\u001b[0m=no'
             ),
-            'ghcr.io/assast/outlookemail:latest',
+            'ghcr.io/devmc12/outlook-email-manager:latest',
         )
 
         self.assertFalse(success)
@@ -232,15 +232,15 @@ class DockerUpdateTests(unittest.TestCase):
             (
                 'time="2026-05-06T10:00:00Z" level=info msg="Unable to update container '
                 '"/outlook-mail-reader": Error response from daemon: Head '
-                '\\"https://ghcr.io/v2/assast/outlookemail/manifests/latest\\": unauthorized. '
+                '\\"https://ghcr.io/v2/devmc12/outlook-email-manager/manifests/latest\\": unauthorized. '
                 'Proceeding to next."\n'
                 'time="2026-05-06T10:00:20Z" level=info msg="Session done" Failed=0 Scanned=1 Updated=0 notify=no'
             ),
-            'ghcr.io/assast/outlookemail:latest',
+            'ghcr.io/devmc12/outlook-email-manager:latest',
         )
 
         self.assertFalse(success)
-        self.assertIn('Watchtower failed to update ghcr.io/assast/outlookemail:latest', message)
+        self.assertIn('Watchtower failed to update ghcr.io/devmc12/outlook-email-manager:latest', message)
         self.assertIn('unauthorized', message)
 
     def test_update_state_persists_latest_snapshot_to_file(self):
@@ -294,7 +294,7 @@ class DockerUpdateTests(unittest.TestCase):
             '_inspect_docker_container',
             return_value={
                 'Name': '/outlook-mail-reader',
-                'Config': {'Image': 'ghcr.io/assast/outlookemail:v2.0.39'},
+                'Config': {'Image': 'ghcr.io/devmc12/outlook-email-manager:v2.0.39'},
             },
         ):
             config = web_outlook_app.get_docker_update_config()
@@ -302,7 +302,7 @@ class DockerUpdateTests(unittest.TestCase):
         self.assertTrue(config['enabled'])
         self.assertFalse(config['available'])
         self.assertEqual(config['container'], 'outlook-mail-reader')
-        self.assertEqual(config['current_image'], 'ghcr.io/assast/outlookemail:v2.0.39')
+        self.assertEqual(config['current_image'], 'ghcr.io/devmc12/outlook-email-manager:v2.0.39')
         self.assertIn('mutable image tag like latest/main/dev', config['reason'])
 
     def test_docker_update_config_resolves_current_container_name_from_hostname(self):
@@ -324,7 +324,7 @@ class DockerUpdateTests(unittest.TestCase):
             '_inspect_docker_container',
             return_value={
                 'Name': '/outlook-mail-reader',
-                'Config': {'Image': 'ghcr.io/assast/outlookemail:latest'},
+                'Config': {'Image': 'ghcr.io/devmc12/outlook-email-manager:latest'},
             },
         ):
             config = web_outlook_app.get_docker_update_config()
@@ -332,7 +332,7 @@ class DockerUpdateTests(unittest.TestCase):
         self.assertTrue(config['enabled'])
         self.assertTrue(config['available'])
         self.assertEqual(config['container'], 'outlook-mail-reader')
-        self.assertEqual(config['current_image'], 'ghcr.io/assast/outlookemail:latest')
+        self.assertEqual(config['current_image'], 'ghcr.io/devmc12/outlook-email-manager:latest')
 
     def test_docker_update_config_uses_dedicated_status_timeout_for_inspect(self):
         captured = {}
@@ -341,7 +341,7 @@ class DockerUpdateTests(unittest.TestCase):
             captured['timeout_seconds'] = config['timeout_seconds']
             return {
                 'Name': '/outlook-mail-reader',
-                'Config': {'Image': 'ghcr.io/assast/outlookemail:latest'},
+                'Config': {'Image': 'ghcr.io/devmc12/outlook-email-manager:latest'},
             }
 
         with patch.dict(
