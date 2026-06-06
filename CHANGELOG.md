@@ -7,6 +7,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 ## [Unreleased]
 
 ### Added
+- 普通邮箱本地保留开启时，邮件转发轮询会把候选邮件和已取到的详情正文写入本地保留缓存；轮询缓存的新邮件在未被普通列表确认前保持隐藏，仍保留“点击显示”/“自动展示新邮件”逻辑，并支持被本地搜索命中。
 
 ## [2.0.63+2] - 2026-06-06
 
