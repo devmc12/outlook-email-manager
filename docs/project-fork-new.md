@@ -1,5 +1,16 @@
 # Project Fork New
 
+## 227d387 - feat: add retained new mail auto show
+
+本次提交新增了普通邮箱本地保留的新邮件自动展示能力。
+
+- 在“普通邮箱本地保留”设置栏中，将“自动展示新邮件”开关放在“启用普通邮箱本地保留”右侧。
+- 新增设置项 `normal_mail_local_retention_auto_show_new_mail`，默认关闭，并通过 `/api/settings` 读写持久化。
+- 首页启动时会随 `/api/settings` 同步该开关，保证刷新页面后仍按用户选择处理新邮件提示。
+- 默认行为保持不变：后台同步发现新邮件后展示“点击显示”提示条，用户点击后再合并新邮件。
+- 开启后，后台同步发现新邮件会自动调用待处理同步合并逻辑，把新邮件加入当前列表，并继续触发高亮、列表缓存更新和正文保留补齐。
+- 同步更新本地保留说明、API 文档和项目 map，并补充设置 roundtrip、前端接线与 Windows SQLite 临时库关闭测试。
+
 ## b7ec622 - feat: add verification code copy toggle
 
 本次提交新增了邮件列表验证码识别与复制能力。
