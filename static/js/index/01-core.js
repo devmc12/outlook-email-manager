@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, scheduleEmailListLoadCheck, searchAccounts */
+        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, initSearchModeToggle, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, scheduleEmailListLoadCheck, searchAccounts, searchMailContents */
 
         // 全局状态
         let csrfToken = null;
@@ -585,7 +585,8 @@
 
         function canLoadMoreEmails() {
             const isCloudflareGlobalList = currentMethod === 'cloudflare-admin';
-            if (isLoadingMore || !hasMoreEmails || !currentAccount || (isTempEmailGroup && !isCloudflareGlobalList)) {
+            const isMailSearchList = currentMethod === 'mail-search';
+            if (isLoadingMore || !hasMoreEmails || (!currentAccount && !isMailSearchList) || (isTempEmailGroup && !isCloudflareGlobalList && !isMailSearchList)) {
                 return false;
             }
 
@@ -744,9 +745,13 @@
             }
 
             if (accountText) {
-                accountText.textContent = currentAccount
-                    ? `${currentAccount}${isTempEmailGroup ? ' (临时)' : ''}`
-                    : '未选择';
+                if (currentMethod === 'mail-search') {
+                    accountText.textContent = '邮件搜索';
+                } else {
+                    accountText.textContent = currentAccount
+                        ? `${currentAccount}${isTempEmailGroup ? ' (临时)' : ''}`
+                        : '未选择';
+                }
             }
 
             if (listText) {
@@ -1320,6 +1325,9 @@
             initAccountListScroll();
             initAccountPageSizeSelect();
             initAccountSearchScopeSelect();
+            if (typeof initSearchModeToggle === 'function') {
+                initSearchModeToggle();
+            }
             if (typeof initAccountSelectionGestures === 'function') {
                 initAccountSelectionGestures();
             }
@@ -1612,6 +1620,12 @@
 
         async function loadMoreEmails() {
             if (isLoadingMore || !hasMoreEmails) return;
+            if (currentMethod === 'mail-search') {
+                if (typeof searchMailContents === 'function') {
+                    return searchMailContents(null, false, true);
+                }
+                return;
+            }
             if (currentMethod === 'cloudflare-admin') {
                 if (typeof loadMoreCloudflareGlobalMessages === 'function') {
                     return loadMoreCloudflareGlobalMessages();

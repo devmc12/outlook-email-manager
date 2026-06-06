@@ -2439,7 +2439,8 @@ def retained_mail_new_message_identifier(row: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def query_existing_retained_normal_mail_keys(rows: List[Dict[str, Any]], db=None) -> set:
+def query_existing_retained_normal_mail_keys(rows: List[Dict[str, Any]], db=None,
+                                             list_cached_only: bool = False) -> set:
     if not rows:
         return set()
 
@@ -2452,11 +2453,12 @@ def query_existing_retained_normal_mail_keys(rows: List[Dict[str, Any]], db=None
         for row in chunk:
             clauses.append('(folder = ? AND provider_message_id = ? AND id_mode = ?)')
             params.extend([row['folder'], row['provider_message_id'], row['id_mode']])
+        list_cached_filter = 'AND list_cached = 1' if list_cached_only else ''
         result_rows = database.execute(
             f'''
             SELECT account_id, folder, provider_message_id, id_mode
             FROM retained_normal_mail_messages
-            WHERE account_id = ? AND ({' OR '.join(clauses)})
+            WHERE account_id = ? AND ({' OR '.join(clauses)}) {list_cached_filter}
             ''',
             params
         ).fetchall()
@@ -2482,7 +2484,7 @@ def find_new_retained_normal_mail_identifiers(account: Dict[str, Any], folder: s
         seen_keys.add(key)
         unique_rows.append(row)
 
-    existing_keys = query_existing_retained_normal_mail_keys(unique_rows, db)
+    existing_keys = query_existing_retained_normal_mail_keys(unique_rows, db, list_cached_only=True)
     return [
         retained_mail_new_message_identifier(row)
         for row in unique_rows
@@ -2539,6 +2541,64 @@ def upsert_retained_normal_mail_list_items(account: Dict[str, Any], folder: str,
         rows
     )
     database.commit()
+    return len(rows)
+
+
+def upsert_retained_normal_mail_forward_poll_items(account: Dict[str, Any], folder: str,
+                                                   items: List[Dict[str, Any]], db=None,
+                                                   commit: bool = True) -> int:
+    account_id = int((account or {}).get('id') or 0)
+    if not account_id:
+        return 0
+
+    rows = [
+        row for row in (
+            build_retained_normal_mail_list_row(account_id, item, folder)
+            for item in (items or [])
+        )
+        if row is not None
+    ]
+    if not rows:
+        return 0
+
+    database = db or get_db()
+    database.executemany(
+        '''
+        INSERT INTO retained_normal_mail_messages (
+            account_id, folder, provider_message_id, id_mode,
+            subject, sender, recipients, received_at, received_at_sort,
+            is_read, has_attachments, body_preview,
+            list_cached, list_cached_at,
+            forward_poll_cached, forward_poll_cached_at,
+            last_synced_at, updated_at
+        )
+        VALUES (
+            :account_id, :folder, :provider_message_id, :id_mode,
+            :subject, :sender, :recipients, :received_at, :received_at_sort,
+            :is_read, :has_attachments, :body_preview,
+            0, NULL,
+            1, CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(account_id, folder, provider_message_id, id_mode)
+        DO UPDATE SET
+            subject = excluded.subject,
+            sender = excluded.sender,
+            recipients = excluded.recipients,
+            received_at = excluded.received_at,
+            received_at_sort = excluded.received_at_sort,
+            is_read = excluded.is_read,
+            has_attachments = excluded.has_attachments,
+            body_preview = excluded.body_preview,
+            forward_poll_cached = 1,
+            forward_poll_cached_at = CURRENT_TIMESTAMP,
+            last_synced_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        ''',
+        rows
+    )
+    if commit:
+        database.commit()
     return len(rows)
 
 
@@ -2767,6 +2827,65 @@ def upsert_retained_normal_mail_detail(account: Dict[str, Any], folder: str,
         row
     )
     database.commit()
+    return True
+
+
+def upsert_retained_normal_mail_forward_poll_detail(account: Dict[str, Any], folder: str,
+                                                    request_message_id: str, detail: Dict[str, Any],
+                                                    method: str, detail_source: str,
+                                                    id_mode: str = '', db=None,
+                                                    commit: bool = True) -> bool:
+    database = db or get_db()
+    normalized_id_mode = normalize_retained_detail_id_mode(method, detail_source, id_mode)
+    row = build_retained_normal_mail_detail_row(
+        account, folder, request_message_id, detail, normalized_id_mode, detail_source, db=database
+    )
+    if not row:
+        return False
+
+    database.execute(
+        '''
+        INSERT INTO retained_normal_mail_messages (
+            account_id, folder, provider_message_id, id_mode,
+            subject, sender, recipients, cc, received_at, received_at_sort,
+            has_attachments, body, body_type, attachments_json,
+            list_cached, list_cached_at,
+            body_cached, body_cached_at,
+            forward_poll_cached, forward_poll_cached_at,
+            last_synced_at, updated_at
+        )
+        VALUES (
+            :account_id, :folder, :provider_message_id, :id_mode,
+            :subject, :sender, :recipients, :cc, :received_at, :received_at_sort,
+            :has_attachments, :body, :body_type, :attachments_json,
+            0, NULL,
+            1, CURRENT_TIMESTAMP,
+            1, CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        )
+        ON CONFLICT(account_id, folder, provider_message_id, id_mode)
+        DO UPDATE SET
+            subject = excluded.subject,
+            sender = excluded.sender,
+            recipients = excluded.recipients,
+            cc = excluded.cc,
+            received_at = excluded.received_at,
+            received_at_sort = excluded.received_at_sort,
+            has_attachments = excluded.has_attachments,
+            body = excluded.body,
+            body_type = excluded.body_type,
+            attachments_json = excluded.attachments_json,
+            body_cached = 1,
+            body_cached_at = CURRENT_TIMESTAMP,
+            forward_poll_cached = 1,
+            forward_poll_cached_at = CURRENT_TIMESTAMP,
+            last_synced_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        ''',
+        row
+    )
+    if commit:
+        database.commit()
     return True
 
 
@@ -3196,6 +3315,11 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
     filter_sql, filter_params = build_retained_mail_filter_sql(
         subject_contains, from_contains, keyword
     )
+    cache_visibility_filter = (
+        'AND (list_cached = 1 OR forward_poll_cached = 1)'
+        if (subject_contains or from_contains or keyword)
+        else 'AND list_cached = 1'
+    )
     cte_sql = f'''
         WITH ranked_retained AS (
             SELECT provider_message_id, subject, sender, recipients, received_at,
@@ -3206,7 +3330,7 @@ def fetch_retained_normal_mail_list(account: Dict[str, Any], folder: str,
                        ORDER BY {dedupe_order}
                    ) AS retained_rank
             FROM retained_normal_mail_messages
-            WHERE account_id = ? AND list_cached = 1 {folder_filter}
+            WHERE account_id = ? {cache_visibility_filter} {folder_filter}
         ),
         filtered_retained AS (
             SELECT *

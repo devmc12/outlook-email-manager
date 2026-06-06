@@ -865,8 +865,10 @@ class ProjectRuntimeTests(unittest.TestCase):
             'attachments_json',
             'list_cached',
             'body_cached',
+            'forward_poll_cached',
             'list_cached_at',
             'body_cached_at',
+            'forward_poll_cached_at',
             'last_synced_at',
             'created_at',
             'updated_at',
@@ -2071,6 +2073,67 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('cacheValue.emails = cacheValue.emails.filter(email => !normalizedIds.has(String(email.id)));', self.emails_js)
         self.assertIn('removeDeletedEmailsFromCachedLists(deletedIds);', self.emails_js)
         self.assertIn('if (currentEmailDetail && deletedIds.has(String(currentEmailDetail.id)))', self.emails_js)
+
+
+class FrontendMailContentSearchTests(unittest.TestCase):
+    def setUp(self):
+        self.layout_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')
+        self.groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
+        self.emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')
+        self.core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+
+    def test_search_mode_toggle_and_compact_scope_are_present(self):
+        account_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '04-account-panel.css').read_text(encoding='utf-8')
+        responsive_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '08-responsive.css').read_text(encoding='utf-8')
+
+        self.assertIn('id="searchModeAccountBtn"', self.layout_html)
+        self.assertIn('id="searchModeMailBtn"', self.layout_html)
+        self.assertIn("onclick=\"handleSearchModeChange('account')\"", self.layout_html)
+        self.assertIn("onclick=\"handleSearchModeChange('mail')\"", self.layout_html)
+        self.assertIn('.search-mode-toggle {', account_css)
+        self.assertIn('grid-template-columns: minmax(0, 1fr) 104px;', account_css)
+        self.assertIn('grid-template-areas:', account_css)
+        self.assertIn('grid-template-columns: minmax(0, 1fr) 104px;', responsive_css)
+
+    def test_mail_search_frontend_calls_local_mail_search_api(self):
+        self.assertIn("SEARCH_MODE_STORAGE_KEY = 'outlook_search_mode'", self.groups_js)
+        self.assertIn('function initSearchModeToggle()', self.groups_js)
+        self.assertIn('function handleSearchModeChange(mode)', self.groups_js)
+        self.assertIn('async function searchMailContents(query = null, forceRefresh = false, append = false)', self.groups_js)
+        self.assertIn("fetch(`/api/emails/search?${params.toString()}`)", self.groups_js)
+        self.assertIn("params.set('account_id', String(mailSearchState.activeAccountId));", self.groups_js)
+        self.assertIn("return searchMailContents(query, forceRefresh, append);", self.groups_js)
+        self.assertIn('initSearchModeToggle();', self.core_js)
+        self.assertIn("currentMethod === 'mail-search'", self.core_js)
+
+    def test_mail_search_renders_account_hits_and_toggles_active_account(self):
+        self.assertIn('function renderMailSearchAccountList(accounts)', self.groups_js)
+        self.assertIn('class="account-item mail-search-account-hit ${isActive ? \'active\' : \'\'}"', self.groups_js)
+        self.assertIn('data-mail-search-account-id="${accountId}"', self.groups_js)
+        self.assertIn('onclick="toggleMailSearchAccountFilter(${accountId})"', self.groups_js)
+        self.assertIn('function toggleMailSearchAccountFilter(accountId)', self.groups_js)
+        self.assertIn('mailSearchState.activeAccountId = Number(mailSearchState.activeAccountId) === normalizedAccountId', self.groups_js)
+        self.assertIn('? null', self.groups_js)
+        self.assertIn(': normalizedAccountId;', self.groups_js)
+
+    def test_mail_search_results_are_readonly_and_use_result_account_for_detail(self):
+        self.assertIn('function getEmailActionAccount(emailItem = {})', self.emails_js)
+        self.assertIn('emailItem?.account_email', self.emails_js)
+        self.assertIn('currentMethod === \'mail-search\'', self.emails_js)
+        self.assertIn('class="email-item ${isMailSearchList ? \'email-item--readonly\' : \'\'}', self.emails_js)
+        self.assertIn('getEmailActionAccount(currentEmailDetail) === getEmailActionAccount(email)', self.emails_js)
+        self.assertIn('const indexedEmail = currentEmails[Number(index)];', self.emails_js)
+        self.assertIn('account_email: actionAccount', self.emails_js)
+        self.assertIn('if (currentMethod !== \'mail-search\' && selectedEmail?.is_read === false)', self.emails_js)
+        self.assertIn('deleteBtn.style.display = currentMethod === \'mail-search\' ? \'none\' : \'\';', self.emails_js)
+        self.assertIn("return `/api/email/${encodeURIComponent(getEmailActionAccount(selectedEmail))}/${encodeURIComponent(messageId)}?${query.toString()}`;", self.emails_js)
+        self.assertIn("searchMailContents(null, true, false);", self.emails_js)
+
+    def test_mail_search_mode_does_not_close_mobile_drawer(self):
+        self.assertIn('showEmailList({ scheduleLoadCheck: false, closePanels: false });', self.groups_js)
+        self.assertIn('function showEmailList({ scheduleLoadCheck = true, closePanels = true } = {})', self.emails_js)
+        self.assertIn('if (closePanels) {', self.emails_js)
+        self.assertIn('closeMobilePanels();', self.emails_js)
 
 
 class FrontendEmailBodyRetentionAndIframeTests(unittest.TestCase):

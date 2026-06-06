@@ -1306,8 +1306,10 @@ def init_db():
             attachments_json TEXT DEFAULT '[]',
             list_cached INTEGER NOT NULL DEFAULT 1,
             body_cached INTEGER NOT NULL DEFAULT 0,
+            forward_poll_cached INTEGER NOT NULL DEFAULT 0,
             list_cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             body_cached_at TIMESTAMP,
+            forward_poll_cached_at TIMESTAMP,
             last_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1563,6 +1565,10 @@ def init_db():
     retained_normal_mail_columns = {row[1] for row in cursor.fetchall()}
     if 'received_at_sort' not in retained_normal_mail_columns:
         cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN received_at_sort REAL DEFAULT 0')
+    if 'forward_poll_cached' not in retained_normal_mail_columns:
+        cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN forward_poll_cached INTEGER NOT NULL DEFAULT 0')
+    if 'forward_poll_cached_at' not in retained_normal_mail_columns:
+        cursor.execute('ALTER TABLE retained_normal_mail_messages ADD COLUMN forward_poll_cached_at TIMESTAMP')
 
     cursor.execute("PRAGMA table_info(project_accounts)")
     project_account_columns = [col[1] for col in cursor.fetchall()]

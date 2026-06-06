@@ -1,6 +1,7 @@
 import importlib
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -3187,6 +3188,7 @@ class MultiChannelForwardingTests(unittest.TestCase):
             db = web_outlook_app.get_db()
             db.execute('DELETE FROM forward_logs')
             db.execute('DELETE FROM forwarding_logs')
+            db.execute('DELETE FROM retained_normal_mail_messages')
             db.execute('DELETE FROM account_tags')
             db.execute('DELETE FROM account_aliases')
             db.execute('DELETE FROM account_refresh_logs')
@@ -3196,6 +3198,9 @@ class MultiChannelForwardingTests(unittest.TestCase):
 
             self.assertTrue(web_outlook_app.set_setting('forward_channels', 'smtp,telegram'))
             self.assertTrue(web_outlook_app.set_setting('forward_include_account_group', 'false'))
+            self.assertTrue(web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'false'))
+            if hasattr(web_outlook_app, 'clear_normal_mail_local_retention_enabled_cache'):
+                web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
             self.assertTrue(web_outlook_app.set_setting('email_forward_recipient', 'main@example.com'))
             self.assertTrue(web_outlook_app.set_setting('smtp_host', 'smtp.example.com'))
             self.assertTrue(web_outlook_app.set_setting_encrypted('telegram_bot_token', '123456:abcdef'))
@@ -3318,6 +3323,142 @@ class MultiChannelForwardingTests(unittest.TestCase):
         self.assertEqual(
             [row['channel'] for row in forward_log_rows],
             ['email', 'telegram'],
+        )
+
+    def test_process_forwarding_job_retains_polled_mail_when_retention_enabled(self):
+        email_item = {
+            'id': 'message-retained-poll',
+            'id_mode': 'graph',
+            'folder': 'inbox',
+            'subject': 'retained poll subject',
+            'from': 'sender@example.com',
+            'to': 'reader@example.com',
+            'date': '2026-04-15T09:00:00Z',
+            'is_read': False,
+            'has_attachments': False,
+            'body_preview': 'retained poll preview',
+        }
+        email_detail = {
+            'id': 'message-retained-poll',
+            'subject': 'retained poll subject detail',
+            'from': 'sender@example.com',
+            'to': 'reader@example.com',
+            'cc': 'copy@example.com',
+            'date': '2026-04-15T09:00:00Z',
+            'body': '<p>retained poll body</p>',
+            'body_type': 'html',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true'))
+            web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail):
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True):
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True):
+                        web_outlook_app.process_forwarding_job()
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            row = db.execute(
+                '''
+                SELECT provider_message_id, id_mode, subject, sender, body_preview,
+                       body, body_type, list_cached, body_cached,
+                       forward_poll_cached, forward_poll_cached_at
+                FROM retained_normal_mail_messages
+                WHERE account_id = ? AND provider_message_id = ?
+                ''',
+                (self.account_id, 'message-retained-poll'),
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row['id_mode'], 'graph')
+        self.assertEqual(row['subject'], 'retained poll subject detail')
+        self.assertEqual(row['sender'], 'sender@example.com')
+        self.assertEqual(row['body_preview'], 'retained poll preview')
+        self.assertEqual(row['body'], '<p>retained poll body</p>')
+        self.assertEqual(row['body_type'], 'html')
+        self.assertEqual(row['list_cached'], 0)
+        self.assertEqual(row['body_cached'], 1)
+        self.assertEqual(row['forward_poll_cached'], 1)
+        self.assertIsNotNone(row['forward_poll_cached_at'])
+
+    def test_process_forwarding_job_does_not_retain_polled_mail_when_retention_disabled(self):
+        email_item = {
+            'id': 'message-retention-disabled',
+            'folder': 'inbox',
+            'date': '2026-04-15T09:30:00Z',
+        }
+        email_detail = {
+            'id': 'message-retention-disabled',
+            'subject': 'disabled retention subject',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T09:30:00Z',
+            'body': 'disabled retention body',
+            'body_type': 'text',
+        }
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail):
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True):
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True):
+                        web_outlook_app.process_forwarding_job()
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            count = db.execute(
+                'SELECT COUNT(*) AS count FROM retained_normal_mail_messages WHERE account_id = ?',
+                (self.account_id,),
+            ).fetchone()['count']
+
+        self.assertEqual(count, 0)
+
+    def test_process_forwarding_job_continues_when_forward_retention_write_fails(self):
+        email_item = {
+            'id': 'message-retention-fail',
+            'folder': 'inbox',
+            'date': '2026-04-15T10:00:00Z',
+        }
+        email_detail = {
+            'id': 'message-retention-fail',
+            'subject': 'retention fail subject',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T10:00:00Z',
+            'body': 'retention fail body',
+            'body_type': 'text',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'true'))
+            web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail):
+                with patch.object(web_outlook_app, 'upsert_retained_normal_mail_forward_poll_items', side_effect=sqlite3.OperationalError('database is locked')):
+                    with patch.object(web_outlook_app, 'upsert_retained_normal_mail_forward_poll_detail', side_effect=sqlite3.OperationalError('database is locked')):
+                        with patch.object(web_outlook_app, 'send_forward_email', return_value=True) as email_mock:
+                            with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True) as tg_mock:
+                                web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(email_mock.call_count, 1)
+        self.assertEqual(tg_mock.call_count, 1)
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            rows = db.execute(
+                '''
+                SELECT channel, status
+                FROM forwarding_logs
+                WHERE account_id = ? AND message_id = ?
+                ORDER BY channel
+                ''',
+                (self.account_id, 'message-retention-fail'),
+            ).fetchall()
+
+        self.assertEqual(
+            [(row['channel'], row['status']) for row in rows],
+            [('email', 'success'), ('telegram', 'success')],
         )
 
     def test_process_forwarding_job_keeps_retrying_missing_channel_when_other_channel_already_logged(self):

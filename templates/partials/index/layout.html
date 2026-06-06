@@ -154,6 +154,14 @@
             </div>
             <div class="account-toolbar">
                 <div class="search-container">
+                    <div class="search-mode-toggle" role="group" aria-label="搜索模式">
+                        <button class="search-mode-btn active" id="searchModeAccountBtn" type="button"
+                            data-search-mode="account" aria-pressed="true"
+                            onclick="handleSearchModeChange('account')">账号</button>
+                        <button class="search-mode-btn" id="searchModeMailBtn" type="button"
+                            data-search-mode="mail" aria-pressed="false"
+                            onclick="handleSearchModeChange('mail')">邮件</button>
+                    </div>
                     <textarea id="globalSearch" class="search-input" rows="1"
                         placeholder="邮箱|别名|备注|标签"
                         autocomplete="off" spellcheck="false"></textarea>
