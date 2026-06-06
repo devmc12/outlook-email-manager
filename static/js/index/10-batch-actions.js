@@ -232,7 +232,8 @@
             const disableForwardingChecked = checked.filter(cb => cb.dataset.forwardEnabled === 'true');
             const isForwardingUpdating = batchEnableForwardingBtn?.dataset.loading === 'true'
                 || batchDisableForwardingBtn?.dataset.loading === 'true';
-            const isTempContext = !!isTempEmailGroup;
+            const isMailSearchContext = typeof isMailSearchMode === 'function' && isMailSearchMode();
+            const isTempContext = !!isTempEmailGroup && !isMailSearchContext;
             const loadedAccountCount = allCheckboxes.length;
             const totalAccountCount = Number(accountPaginationState?.total) || loadedAccountCount;
             const isPartialPageLoaded = !isTempContext && totalAccountCount > loadedAccountCount;
