@@ -1,9 +1,9 @@
-        /* global EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isNormalMailLocalRetentionAutoShowNewMailEnabled, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, isVerificationCodeCopyEnabled, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isNormalMailLocalRetentionAutoShowNewMailEnabled, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, isVerificationCodeCopyEnabled, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderEmptyStateMarkup, scheduleEmailListLoadCheck, searchMailContents, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
         function isNormalMailboxListRequest() {
-            return !isTempEmailGroup && currentMethod !== 'cloudflare-admin';
+            return currentMethod === 'mail-search' || (!isTempEmailGroup && currentMethod !== 'cloudflare-admin');
         }
 
         const backgroundMailboxSyncs = new Map();
@@ -194,6 +194,17 @@
         function buildEmailListRequestUrl(email, params = {}) {
             const query = new URLSearchParams(params);
             return `/api/emails/${encodeURIComponent(email)}?${query.toString()}`;
+        }
+
+        function getEmailActionAccount(emailItem = {}) {
+            return String(
+                emailItem?.account_email
+                || emailItem?.accountEmail
+                || currentEmailDetail?.account_email
+                || currentEmailDetail?.accountEmail
+                || currentAccount
+                || ''
+            ).trim();
         }
 
         function setEmailListLoadingState(isLoading, options = {}) {
@@ -808,15 +819,20 @@
                     query.set('id_mode', selectedEmail.id_mode);
                 }
             }
-            return `/api/email/${encodeURIComponent(currentAccount)}/${encodeURIComponent(messageId)}?${query.toString()}`;
+            return `/api/email/${encodeURIComponent(getEmailActionAccount(selectedEmail))}/${encodeURIComponent(messageId)}?${query.toString()}`;
         }
 
         function getRecipientDisplayLabel(emailItem) {
+            if (currentMethod === 'mail-search') {
+                const accountEmail = getEmailActionAccount(emailItem);
+                return accountEmail ? `账号: ${accountEmail}` : '';
+            }
+
             if (isTempEmailGroup && currentMethod !== 'cloudflare-admin') {
                 return '';
             }
 
-            const normalizedCurrentAccount = String(currentAccount || '').trim().toLowerCase();
+            const normalizedCurrentAccount = String(getEmailActionAccount(emailItem) || '').trim().toLowerCase();
             const toValue = String(emailItem?.to || '').trim();
             if (!normalizedCurrentAccount || !toValue) {
                 return '';
@@ -837,6 +853,9 @@
         function getEmailSourceLabel(emailItem) {
             if (currentMethod === 'cloudflare-admin') {
                 return 'Cloudflare';
+            }
+            if (currentMethod === 'mail-search') {
+                return emailItem?.folder ? getFolderDisplayName(emailItem.folder) : '';
             }
             if (isTempEmailGroup || currentFolder !== 'all' || !emailItem?.folder) {
                 return '';
@@ -867,7 +886,7 @@
             query.set('method', getCurrentEmailRemoteActionMethod(email));
             query.set('folder', email?.folder || currentFolder || 'inbox');
             appendEmailIdModeParam(query, email);
-            return `/api/email/${encodeURIComponent(currentAccount)}/${encodeURIComponent(email.id)}/attachments/${encodeURIComponent(attachment.id)}?${query.toString()}`;
+            return `/api/email/${encodeURIComponent(getEmailActionAccount(email))}/${encodeURIComponent(email.id)}/attachments/${encodeURIComponent(attachment.id)}?${query.toString()}`;
         }
 
         function buildAllAttachmentsDownloadUrl(email) {
@@ -875,7 +894,7 @@
             query.set('method', getCurrentEmailRemoteActionMethod(email));
             query.set('folder', email?.folder || currentFolder || 'inbox');
             appendEmailIdModeParam(query, email);
-            return `/api/email/${encodeURIComponent(currentAccount)}/${encodeURIComponent(email.id)}/attachments/download-all?${query.toString()}`;
+            return `/api/email/${encodeURIComponent(getEmailActionAccount(email))}/${encodeURIComponent(email.id)}/attachments/download-all?${query.toString()}`;
         }
 
         function parseDownloadFilename(response, fallbackFilename) {
@@ -1016,9 +1035,12 @@
 
         function renderEmailList(emails) {
             const container = document.getElementById('emailList');
+            const isMailSearchList = currentMethod === 'mail-search';
 
             if (emails.length === 0) {
-                const emptyStateText = isTempEmailGroup
+                const emptyStateText = isMailSearchList
+                    ? '未找到命中邮件'
+                    : isTempEmailGroup
                     ? '暂无邮件'
                     : `${getFolderDisplayName(currentFolder)}为空`;
                 const emptyPrefix = currentMethod === 'cloudflare-admin' && typeof renderCloudflareGlobalFilterBar === 'function'
@@ -1041,8 +1063,10 @@
                 : '';
 
             container.innerHTML = listPrefix + emails.map((email, index) => {
-                const isChecked = selectedEmailIds.has(email.id);
-                const isActive = currentEmailId === email.id;
+                const isChecked = !isMailSearchList && selectedEmailIds.has(email.id);
+                const isActive = isMailSearchList
+                    ? currentEmailId === email.id && getEmailActionAccount(currentEmailDetail) === getEmailActionAccount(email)
+                    : currentEmailId === email.id;
                 const recipientDisplayLabel = getRecipientDisplayLabel(email);
                 const sourceLabel = getEmailSourceLabel(email);
                 const hasAttachments = Boolean(email.has_attachments);
@@ -1054,12 +1078,14 @@
                     ? `<button class="email-verification-code-btn" type="button" data-verification-code="${escapeHtml(verificationCode)}" title="复制验证码 ${escapeHtml(verificationCode)}">${escapeHtml(verificationCode)}</button>`
                     : '';
                 return `
-                <div class="email-item ${email.is_read === false ? 'unread' : ''} ${isActive ? 'active' : ''} ${isNewlySynced ? 'newly-synced' : ''}"
+                <div class="email-item ${isMailSearchList ? 'email-item--readonly' : ''} ${email.is_read === false ? 'unread' : ''} ${isActive ? 'active' : ''} ${isNewlySynced ? 'newly-synced' : ''}"
                      data-email-id="${escapeHtml(String(email.id || ''))}"
                      data-email-index="${index}">
+                    ${isMailSearchList ? '' : `
                     <div class="email-checkbox-wrapper" data-email-id="${escapeHtml(String(email.id || ''))}">
                         <input type="checkbox" class="email-checkbox" ${isChecked ? 'checked' : ''} style="pointer-events: none;">
                     </div>
+                    `}
                     <div class="email-body">
                         <div class="email-top-row">
                             <div class="email-top-main">
@@ -1268,7 +1294,7 @@
             const panel = document.getElementById('emailListPanel');
             const selectedEmails = getSelectedEmailItems();
             const unreadSelectedCount = selectedEmails.filter(email => email.is_read === false).length;
-            if (isTempEmailGroup) {
+            if (isTempEmailGroup || currentMethod === 'mail-search') {
                 bar.style.display = 'none';
                 panel?.classList.remove('batch-toolbar-active');
                 if (markReadBtn) {
@@ -1329,6 +1355,9 @@
         }
 
         async function markSelectedEmailsAsRead() {
+            if (currentMethod === 'mail-search') {
+                return;
+            }
             const btn = document.getElementById('batchMarkReadBtn');
             if (!btn || btn.disabled) return;
 
@@ -1358,6 +1387,9 @@
         }
 
         async function confirmBatchDeleteEmails() {
+            if (currentMethod === 'mail-search') {
+                return;
+            }
             if (selectedEmailIds.size === 0) return;
 
             if (!(await showConfirmModal(`确定要永久删除选中的 ${selectedEmailIds.size} 封邮件吗？此操作不可恢复！`, { title: '批量删除邮件', confirmText: '确认删除' }))) {
@@ -1368,7 +1400,7 @@
         }
 
         async function confirmDeleteCurrentEmail() {
-            if (isTempEmailGroup) return;
+            if (isTempEmailGroup || currentMethod === 'mail-search') return;
             if (!currentEmailDetail || !currentEmailDetail.id) return;
 
             if (!(await showConfirmModal('确定要永久删除这封邮件吗？此操作不可恢复！', { title: '删除邮件', confirmText: '确认删除' }))) {
@@ -1455,7 +1487,15 @@
         // 选择邮件
         async function selectEmail(messageId, index) {
             currentEmailId = messageId;
-            const selectedEmail = currentEmails.find(email => email.id === messageId);
+            const indexedEmail = currentEmails[Number(index)];
+            const selectedEmail = indexedEmail && indexedEmail.id === messageId
+                ? indexedEmail
+                : currentEmails.find(email => email.id === messageId);
+            const actionAccount = getEmailActionAccount(selectedEmail);
+            if (!actionAccount) {
+                showToast('无法确定邮件所属账号', 'error');
+                return;
+            }
             const requestFolder = currentFolder === 'all'
                 ? (selectedEmail?.folder || 'inbox')
                 : currentFolder;
@@ -1475,7 +1515,7 @@
             // 显示工具栏
             document.getElementById('emailDetailToolbar').style.display = 'flex';
             const deleteBtn = document.querySelector('#emailDetailToolbar .batch-btn.danger');
-            if (deleteBtn) deleteBtn.style.display = '';
+            if (deleteBtn) deleteBtn.style.display = currentMethod === 'mail-search' ? 'none' : '';
             showMobileEmailDetail();
 
             // 加载邮件详情
@@ -1496,10 +1536,12 @@
                     currentEmailDetail = {
                         ...data.email,
                         folder: requestFolder,
-                        id_mode: data.email?.id_mode || selectedEmail?.id_mode || ''
+                        id_mode: data.email?.id_mode || selectedEmail?.id_mode || '',
+                        account_id: selectedEmail?.account_id || data.email?.account_id || null,
+                        account_email: actionAccount
                     };
                     renderEmailDetail(currentEmailDetail);
-                    if (selectedEmail?.is_read === false) {
+                    if (currentMethod !== 'mail-search' && selectedEmail?.is_read === false) {
                         void requestMarkEmailsAsRead([{
                             id: messageId,
                             folder: requestFolder,
@@ -1796,7 +1838,8 @@
         }
 
         async function openRawEmailModal() {
-            if (!currentEmailDetail || !currentEmailDetail.id || !currentAccount) {
+            const actionAccount = getEmailActionAccount(currentEmailDetail);
+            if (!currentEmailDetail || !currentEmailDetail.id || !actionAccount) {
                 showToast('请先选择一封邮件', 'warning');
                 return;
             }
@@ -1817,9 +1860,17 @@
 
             const folder = encodeURIComponent(currentEmailDetail.folder || currentFolder || 'inbox');
             const method = encodeURIComponent(getCurrentEmailRemoteActionMethod(currentEmailDetail));
+            const idMode = String(currentEmailDetail.id_mode || '').trim();
             try {
+                const rawQuery = new URLSearchParams({
+                    method: decodeURIComponent(method),
+                    folder: decodeURIComponent(folder)
+                });
+                if (idMode) {
+                    rawQuery.set('id_mode', idMode);
+                }
                 const response = await fetchWithTimeout(
-                    `/api/email/${encodeURIComponent(currentAccount)}/${encodeURIComponent(currentEmailDetail.id)}/raw?method=${method}&folder=${folder}`,
+                    `/api/email/${encodeURIComponent(actionAccount)}/${encodeURIComponent(currentEmailDetail.id)}/raw?${rawQuery.toString()}`,
                     {
                         timeoutMs: EMAIL_DETAIL_REQUEST_TIMEOUT_MS,
                         timeoutMessage: '加载原始邮件超时，请稍后重试'
@@ -1934,12 +1985,14 @@
             }
         }
         // 显示邮件列表（移动端）
-        function showEmailList({ scheduleLoadCheck = true } = {}) {
+        function showEmailList({ scheduleLoadCheck = true, closePanels = true } = {}) {
             document.getElementById('emailListPanel').classList.remove('hidden');
             isListVisible = true;
             document.getElementById('toggleListText').textContent = '隐藏列表';
-            closeMobilePanels();
-            closeNavbarActionsMenu();
+            if (closePanels) {
+                closeMobilePanels();
+                closeNavbarActionsMenu();
+            }
             updateMobileContext();
             if (scheduleLoadCheck) {
                 scheduleEmailListLoadCheck(0);
@@ -1948,6 +2001,12 @@
 
         // 刷新邮件
         function refreshEmails() {
+            if (currentMethod === 'mail-search') {
+                if (typeof searchMailContents === 'function') {
+                    searchMailContents(null, true, false);
+                }
+                return;
+            }
             if (currentAccount) {
                 if (isTempEmailGroup) {
                     if (currentMethod === 'cloudflare-admin') {

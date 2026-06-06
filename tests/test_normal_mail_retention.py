@@ -181,6 +181,179 @@ class NormalMailRetentionTests(unittest.TestCase):
             ).fetchone()
         return row is not None
 
+    def _seed_mail_search_rows(self):
+        with self.app.app_context():
+            group_id = web_outlook_app.add_group('邮件搜索测试', color='#2563eb')
+            self.assertIsNotNone(group_id)
+            self.assertTrue(web_outlook_app.add_account(
+                'search-other@example.com',
+                'password',
+                'client-id-2',
+                'refresh-token-2',
+                group_id=group_id,
+                account_type='outlook',
+                provider='outlook',
+            ))
+            other_account = web_outlook_app.get_account_by_email('search-other@example.com')
+            db = web_outlook_app.get_db()
+            db.executemany(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, received_at_sort,
+                    is_read, has_attachments, body_preview, body, body_type,
+                    list_cached, body_cached, forward_poll_cached
+                )
+                VALUES (?, ?, ?, 'graph', ?, ?, ?, ?, ?, ?, 0, ?, ?, 'html', ?, ?, ?)
+                ''',
+                [
+                    (
+                        self.account['id'], 'inbox', 'mail-search-subject-1',
+                        'Alpha project subject', 'sender-a@example.com', 'reader@example.com',
+                        '2026-05-27T10:00:00Z', 100.0, 0,
+                        'routine preview', '', 1, 0, 0,
+                    ),
+                    (
+                        self.account['id'], 'junkemail', 'mail-search-preview-1',
+                        'Routine subject', 'sender-b@example.com', 'reader@example.com',
+                        '2026-05-27T09:00:00Z', 90.0, 1,
+                        'Preview contains Alpha keyword', '', 1, 0, 0,
+                    ),
+                    (
+                        self.account['id'], 'inbox', 'mail-search-forward-hidden-1',
+                        'Forward hidden Alpha', 'sender-c@example.com', 'reader@example.com',
+                        '2026-05-27T08:00:00Z', 80.0, 1,
+                        'hidden preview', '', 0, 0, 1,
+                    ),
+                    (
+                        other_account['id'], 'inbox', 'mail-search-body-1',
+                        'Routine body subject', 'sender-d@example.com', 'reader@example.com',
+                        '2026-05-27T11:00:00Z', 110.0, 1,
+                        'routine preview', '<p>Deep AlphaBody marker</p>', 1, 1, 0,
+                    ),
+                    (
+                        other_account['id'], 'inbox', 'mail-search-other-1',
+                        'Other notice', 'sender-e@example.com', 'reader@example.com',
+                        '2026-05-27T07:00:00Z', 70.0, 1,
+                        'no match here', '<p>No keyword</p>', 1, 1, 0,
+                    ),
+                ]
+            )
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+            db.commit()
+        return group_id, other_account
+
+    def test_mail_content_search_returns_accounts_and_matching_emails(self):
+        self._seed_mail_search_rows()
+
+        response = self.client.get('/api/emails/search?q=Alpha&limit=10')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertTrue(payload['local_retention_enabled'])
+        self.assertEqual(payload['total'], 4)
+        self.assertFalse(payload['has_more'])
+        self.assertEqual(
+            [item['id'] for item in payload['emails']],
+            [
+                'mail-search-body-1',
+                'mail-search-subject-1',
+                'mail-search-preview-1',
+                'mail-search-forward-hidden-1',
+            ]
+        )
+        self.assertIn('account_email', payload['emails'][0])
+        self.assertEqual(payload['emails'][0]['account_email'], 'search-other@example.com')
+        self.assertIn('AlphaBody', payload['emails'][0]['body'])
+        account_counts = {
+            item['email']: item['match_count']
+            for item in payload['accounts']
+        }
+        self.assertEqual(account_counts['retained@example.com'], 3)
+        self.assertEqual(account_counts['search-other@example.com'], 1)
+
+    def test_mail_content_search_decodes_plus_as_space(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, received_at_sort,
+                    body_preview, list_cached
+                )
+                VALUES (?, 'inbox', 'mail-search-access-1', 'graph',
+                        'OpenAI - Access Deactivated', 'sender@example.com',
+                        'reader@example.com', '2026-05-27T12:00:00Z',
+                        120.0, 'Account access notice', 1)
+                ''',
+                (self.account['id'],)
+            )
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'true',
+            ))
+            db.commit()
+
+        response = self.client.get('/api/emails/search?q=Access+Deactiv&folder=all&limit=30&offset=0')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['emails'][0]['id'], 'mail-search-access-1')
+
+    def test_mail_content_search_filters_by_group_folder_and_account(self):
+        group_id, other_account = self._seed_mail_search_rows()
+
+        group_response = self.client.get(f'/api/emails/search?q=AlphaBody&group_id={group_id}')
+        folder_response = self.client.get('/api/emails/search?q=Alpha&folder=junkemail')
+        account_response = self.client.get(
+            f'/api/emails/search?q=Alpha&account_id={other_account["id"]}'
+        )
+
+        self.assertEqual(group_response.status_code, 200)
+        group_payload = group_response.get_json()
+        self.assertTrue(group_payload['success'])
+        self.assertEqual(group_payload['total'], 1)
+        self.assertEqual(group_payload['emails'][0]['account_email'], 'search-other@example.com')
+
+        self.assertEqual(folder_response.status_code, 200)
+        folder_payload = folder_response.get_json()
+        self.assertTrue(folder_payload['success'])
+        self.assertEqual(folder_payload['total'], 1)
+        self.assertEqual(folder_payload['emails'][0]['id'], 'mail-search-preview-1')
+        self.assertEqual(folder_payload['emails'][0]['folder'], 'junkemail')
+
+        self.assertEqual(account_response.status_code, 200)
+        account_payload = account_response.get_json()
+        self.assertTrue(account_payload['success'])
+        self.assertEqual(account_payload['total'], 1)
+        self.assertEqual(account_payload['emails'][0]['id'], 'mail-search-body-1')
+        self.assertGreaterEqual(len(account_payload['accounts']), 2)
+
+    def test_mail_content_search_disabled_retention_returns_empty_payload(self):
+        self._seed_mail_search_rows()
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting(
+                'normal_mail_local_retention_enabled',
+                'false',
+            ))
+
+        response = self.client.get('/api/emails/search?q=Alpha')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertFalse(payload['local_retention_enabled'])
+        self.assertEqual(payload['accounts'], [])
+        self.assertEqual(payload['emails'], [])
+        self.assertEqual(payload['total'], 0)
+
     def test_get_settings_fresh_db_returns_default_disabled_retention_switch(self):
         with tempfile.TemporaryDirectory(prefix='outlookEmail-fresh-settings-') as temp_dir:
             fresh_db_path = os.path.join(temp_dir, 'fresh.db')

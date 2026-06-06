@@ -1568,6 +1568,260 @@ def api_get_emails_v2(email_addr):
     )
 
 
+MAIL_CONTENT_SEARCH_DEFAULT_LIMIT = 30
+MAIL_CONTENT_SEARCH_MAX_LIMIT = 100
+
+
+def parse_optional_positive_int(value: Any) -> Optional[int]:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def normalize_mail_content_search_limit(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = MAIL_CONTENT_SEARCH_DEFAULT_LIMIT
+    return max(1, min(parsed, MAIL_CONTENT_SEARCH_MAX_LIMIT))
+
+
+def build_mail_content_search_cte(query: str, group_id: Optional[int],
+                                  folder: str) -> tuple[str, List[Any]]:
+    source_filters = ['(m.list_cached = 1 OR m.forward_poll_cached = 1)']
+    params: List[Any] = []
+
+    if folder != 'all':
+        source_filters.append('m.folder = ?')
+        params.append(folder)
+
+    if group_id:
+        source_filters.append('a.group_id = ?')
+        params.append(group_id)
+
+    like_param = retained_mail_like_param(query)
+    params.extend([like_param, like_param, like_param])
+
+    return f'''
+        WITH ranked_retained AS (
+            SELECT
+                m.id AS retained_id,
+                m.account_id,
+                m.folder,
+                m.provider_message_id,
+                m.id_mode,
+                m.subject,
+                m.sender,
+                m.recipients,
+                m.received_at,
+                m.received_at_sort,
+                m.is_read,
+                m.has_attachments,
+                m.body_preview,
+                m.body,
+                m.body_cached,
+                m.updated_at,
+                a.email AS account_email,
+                a.group_id AS account_group_id,
+                a.account_type AS account_type,
+                a.provider AS provider,
+                a.status AS account_status,
+                g.name AS group_name,
+                g.color AS group_color,
+                ROW_NUMBER() OVER (
+                    PARTITION BY m.account_id, m.folder, m.provider_message_id
+                    ORDER BY
+                        CASE WHEN m.body_cached = 1 THEN 0 ELSE 1 END,
+                        m.received_at_sort DESC,
+                        m.updated_at DESC,
+                        m.id DESC
+                ) AS retained_rank
+            FROM retained_normal_mail_messages m
+            JOIN accounts a ON a.id = m.account_id
+            LEFT JOIN groups g ON g.id = a.group_id
+            WHERE {' AND '.join(source_filters)}
+        ),
+        filtered_retained AS (
+            SELECT *
+            FROM ranked_retained
+            WHERE retained_rank = 1
+              AND (
+                LOWER(COALESCE(subject, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(COALESCE(body_preview, '')) LIKE ? ESCAPE '\\'
+                OR LOWER(retained_mail_strip_html(COALESCE(body, ''))) LIKE ? ESCAPE '\\'
+              )
+        )
+    ''', params
+
+
+def retained_mail_search_row_to_list_item(row) -> Dict[str, Any]:
+    item = retained_mail_row_to_list_item(row)
+    item['account_id'] = row['account_id']
+    item['account_email'] = row['account_email'] or ''
+    item['group_id'] = row['account_group_id']
+    item['group_name'] = row['group_name'] or ''
+    item['group_color'] = row['group_color'] or ''
+    item['source'] = 'local_retention_search'
+    return item
+
+
+def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
+                                         folder: str, account_id: Optional[int],
+                                         limit: int, offset: int) -> Dict[str, Any]:
+    db = get_db()
+    register_retained_mail_sql_functions(db)
+    cte_sql, base_params = build_mail_content_search_cte(query, group_id, folder)
+
+    account_rows = db.execute(
+        cte_sql + '''
+        SELECT
+            account_id AS id,
+            account_email AS email,
+            account_group_id AS group_id,
+            group_name,
+            group_color,
+            account_type,
+            provider,
+            account_status AS status,
+            COUNT(*) AS match_count,
+            MAX(received_at_sort) AS latest_match_sort,
+            (
+                SELECT fr2.received_at
+                FROM filtered_retained fr2
+                WHERE fr2.account_id = filtered_retained.account_id
+                ORDER BY fr2.received_at_sort DESC, fr2.retained_id DESC
+                LIMIT 1
+            ) AS latest_match_at
+        FROM filtered_retained
+        GROUP BY account_id
+        ORDER BY match_count DESC, latest_match_sort DESC, email COLLATE NOCASE ASC
+        ''',
+        base_params
+    ).fetchall()
+
+    email_filter_sql = ''
+    email_params = list(base_params)
+    if account_id:
+        email_filter_sql = 'WHERE account_id = ?'
+        email_params.append(account_id)
+
+    total_row = db.execute(
+        cte_sql + f'''
+        SELECT COUNT(*) AS count
+        FROM filtered_retained
+        {email_filter_sql}
+        ''',
+        email_params
+    ).fetchone()
+    total_count = int(total_row['count'] if total_row else 0)
+
+    rows = db.execute(
+        cte_sql + f'''
+        SELECT provider_message_id, subject, sender, recipients, received_at,
+               is_read, has_attachments, body_preview, body, folder, id_mode,
+               account_id, account_email, account_group_id, group_name, group_color
+        FROM filtered_retained
+        {email_filter_sql}
+        ORDER BY received_at_sort DESC, retained_id DESC
+        LIMIT ? OFFSET ?
+        ''',
+        email_params + [limit + 1, offset]
+    ).fetchall()
+
+    emails = [retained_mail_search_row_to_list_item(row) for row in rows[:limit]]
+    accounts = []
+    for row in account_rows:
+        accounts.append({
+            'id': row['id'],
+            'email': row['email'] or '',
+            'group_id': row['group_id'],
+            'group_name': row['group_name'] or '',
+            'group_color': row['group_color'] or '',
+            'account_type': row['account_type'] or 'outlook',
+            'provider': row['provider'] or 'outlook',
+            'status': row['status'] or 'active',
+            'match_count': int(row['match_count'] or 0),
+            'latest_match_at': row['latest_match_at'] or '',
+        })
+
+    return {
+        'success': True,
+        'local_retention': True,
+        'local_retention_enabled': True,
+        'accounts': accounts,
+        'emails': emails,
+        'total': total_count,
+        'has_more': len(rows) > limit or total_count > offset + len(emails),
+        'limit': limit,
+        'offset': offset,
+        'folder': folder,
+        'method': 'Local Mail Search',
+        'request_method': 'local-search',
+    }
+
+
+@app.route('/api/emails/search')
+@login_required
+def api_search_retained_emails():
+    query = str(request.args.get('q', '') or '').strip().lower()
+    folder = normalize_folder_name(request.args.get('folder', 'all'))
+    valid_folders = {'all', 'inbox', 'junkemail'}
+    if folder not in valid_folders:
+        return jsonify({
+            'success': False,
+            'error': f'folder 参数无效，仅支持 {", ".join(sorted(valid_folders))}'
+        }), 400
+
+    limit = normalize_mail_content_search_limit(request.args.get('limit', MAIL_CONTENT_SEARCH_DEFAULT_LIMIT))
+    offset = parse_non_negative_int(request.args.get('offset', 0), 0)
+    group_id = parse_optional_positive_int(request.args.get('group_id'))
+    account_id = parse_optional_positive_int(request.args.get('account_id'))
+
+    if not query:
+        return jsonify({
+            'success': True,
+            'local_retention': True,
+            'local_retention_enabled': is_normal_mail_local_retention_enabled(),
+            'accounts': [],
+            'emails': [],
+            'total': 0,
+            'has_more': False,
+            'limit': limit,
+            'offset': offset,
+            'folder': folder,
+            'method': 'Local Mail Search',
+            'request_method': 'local-search',
+        })
+
+    if not is_normal_mail_local_retention_enabled():
+        return jsonify({
+            'success': True,
+            'local_retention': False,
+            'local_retention_enabled': False,
+            'accounts': [],
+            'emails': [],
+            'total': 0,
+            'has_more': False,
+            'limit': limit,
+            'offset': offset,
+            'folder': folder,
+            'method': 'Local Mail Search',
+            'request_method': 'local-search',
+            'message': '普通邮箱本地保留未启用',
+        })
+
+    return jsonify(search_retained_normal_mail_messages(
+        query,
+        group_id,
+        folder,
+        account_id,
+        limit,
+        offset
+    ))
+
+
 def api_external_get_emails_v2():
     email_addr = get_query_arg_preserve_plus('email', '').strip()
     folder = normalize_folder_name(request.args.get('folder', 'inbox'))
@@ -1681,6 +1935,7 @@ app.view_functions['api_external_get_emails'] = api_key_required(api_external_ge
 
 assert_endpoint_protection('api_update_account', '_requires_login', 'login_required')
 assert_endpoint_protection('api_get_emails', '_requires_login', 'login_required')
+assert_endpoint_protection('api_search_retained_emails', '_requires_login', 'login_required')
 assert_endpoint_protection('api_external_get_emails', '_requires_api_key', 'api_key_required')
 
 

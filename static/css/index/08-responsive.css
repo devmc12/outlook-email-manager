@@ -208,6 +208,19 @@
                 max-width: none;
             }
 
+            .search-container {
+                grid-template-columns: minmax(0, 1fr) 104px;
+            }
+
+            .search-mode-toggle {
+                width: 132px;
+                min-height: 40px;
+            }
+
+            .search-mode-btn {
+                font-size: 13px;
+            }
+
             .search-input {
                 min-height: 44px;
                 font-size: 16px;

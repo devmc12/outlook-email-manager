@@ -1,8 +1,21 @@
-        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentGroupId, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, isMobileLayout, isTempEmailGroup, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showGetRefreshTokenModal, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateMobileContext */
+        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, clearEmailSelection, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, hideNewMailNotice, isMobileLayout, isTempEmailGroup, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmailList, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setMailSyncStatus, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showEmailList, showGetRefreshTokenModal, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateEmailListHeader, updateMobileContext */
 
         // ==================== 分组相关 ====================
 
         const ACCOUNT_SEARCH_MAX_TERMS = 200;
+        const SEARCH_MODE_STORAGE_KEY = 'outlook_search_mode';
+        const MAIL_SEARCH_EMAIL_LIMIT = 30;
+        let currentSearchMode = 'account';
+        let mailSearchRequestSeq = 0;
+        let mailSearchState = {
+            query: '',
+            accounts: [],
+            emails: [],
+            activeAccountId: null,
+            total: 0,
+            hasMore: false,
+            loading: false
+        };
 
         // 加载分组列表
         async function loadGroups() {
@@ -368,6 +381,129 @@
             }
         }
 
+        function readStoredSearchMode() {
+            try {
+                return localStorage.getItem(SEARCH_MODE_STORAGE_KEY) === 'mail' ? 'mail' : 'account';
+            } catch (error) {
+                return 'account';
+            }
+        }
+
+        function storeSearchMode(mode) {
+            try {
+                localStorage.setItem(SEARCH_MODE_STORAGE_KEY, mode === 'mail' ? 'mail' : 'account');
+            } catch (error) {
+                // localStorage may be unavailable in restricted browser contexts.
+            }
+        }
+
+        function getSearchMode() {
+            return currentSearchMode === 'mail' ? 'mail' : 'account';
+        }
+
+        function isMailSearchMode() {
+            return getSearchMode() === 'mail';
+        }
+
+        function getSearchInputValue() {
+            return (document.getElementById('globalSearch')?.value || '').trim();
+        }
+
+        function resetMailSearchState(options = {}) {
+            mailSearchState = {
+                query: '',
+                accounts: [],
+                emails: [],
+                activeAccountId: null,
+                total: 0,
+                hasMore: false,
+                loading: false
+            };
+            if (options.clearResults === true && currentMethod === 'mail-search') {
+                currentEmails = [];
+                currentEmailId = null;
+                currentEmailDetail = null;
+                currentSkip = 0;
+                hasMoreEmails = false;
+            }
+        }
+
+        function getDefaultSearchPlaceholder() {
+            if (isMailSearchMode()) {
+                return '标题 / 预览 / 正文';
+            }
+            return isTempEmailGroup ? '搜索临时邮箱地址或标签...' : '邮箱|别名|备注|标签';
+        }
+
+        function syncSearchModeUI() {
+            const mode = getSearchMode();
+            const container = document.querySelector('.search-container');
+            const searchInput = document.getElementById('globalSearch');
+            const tempFilter = document.getElementById('tempEmailProviderFilter');
+            const sortControl = document.querySelector('.sort-control');
+            const optionsRow = document.getElementById('accountListOptionsRow');
+            const pageSizeContainer = document.getElementById('accountPageSizeContainer');
+            const mailMode = mode === 'mail';
+
+            document.querySelectorAll('.search-mode-btn[data-search-mode]').forEach(button => {
+                const active = button.dataset.searchMode === mode;
+                button.classList.toggle('active', active);
+                button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+
+            if (container) {
+                container.dataset.searchMode = mode;
+            }
+            if (searchInput) {
+                searchInput.placeholder = getDefaultSearchPlaceholder();
+            }
+
+            if (tempFilter) {
+                tempFilter.style.display = !mailMode && isTempEmailGroup ? 'flex' : 'none';
+            }
+            if (sortControl) {
+                sortControl.style.display = !mailMode && !isTempEmailGroup ? 'flex' : 'none';
+            }
+            if (optionsRow) {
+                optionsRow.style.display = mailMode ? 'none' : 'grid';
+            }
+            if (pageSizeContainer) {
+                pageSizeContainer.style.display = !mailMode && !isTempEmailGroup ? 'flex' : 'none';
+            }
+
+            syncAccountSearchScopeVisibility();
+        }
+
+        function initSearchModeToggle() {
+            currentSearchMode = readStoredSearchMode();
+            syncSearchModeUI();
+        }
+
+        function handleSearchModeChange(mode) {
+            const nextMode = mode === 'mail' ? 'mail' : 'account';
+            if (currentSearchMode === nextMode) {
+                syncSearchModeUI();
+                return;
+            }
+
+            currentSearchMode = nextMode;
+            storeSearchMode(currentSearchMode);
+            resetMailSearchState({ clearResults: nextMode === 'account' });
+            syncSearchModeUI();
+
+            const searchQuery = getSearchInputValue();
+            if (searchQuery) {
+                searchAccounts(searchQuery, true);
+                return;
+            }
+
+            if (isMailSearchMode()) {
+                renderMailSearchEmptyState('输入关键词搜索本地保留邮件');
+                return;
+            }
+            refreshVisibleAccountList(true);
+        }
+
         // 选择分组
         async function selectGroup(groupId) {
             if (Date.now() < suppressGroupClickUntil) {
@@ -382,6 +518,7 @@
             if (searchInput) {
                 searchInput.value = '';
             }
+            resetMailSearchState({ clearResults: true });
 
             // 检查是否是临时邮箱分组
             const group = groups.find(g => g.id === groupId);
@@ -417,6 +554,15 @@
             updateAccountPanelActions();
             const shouldAdvanceToAccounts = isMobileLayout()
                 && document.getElementById('groupPanel')?.classList.contains('show');
+
+            if (isMailSearchMode()) {
+                renderMailSearchEmptyState('输入关键词搜索本地保留邮件');
+                if (shouldAdvanceToAccounts) {
+                    openMobilePanel('account');
+                }
+                updateMobileContext();
+                return;
+            }
 
             // 加载该分组的邮箱
             if (isTempEmailGroup) {
@@ -504,6 +650,7 @@
                     searchInput.placeholder = '邮箱|别名|备注|标签';
                 }
             }
+            syncSearchModeUI();
         }
 
         // 筛选临时邮箱渠道（点击已激活的按钮取消筛选）
@@ -599,7 +746,7 @@
             const container = document.querySelector('.search-container');
             const wrap = document.getElementById('accountSearchScopeWrap');
             const select = document.getElementById('accountSearchScopeSelect');
-            const hidden = !!isTempEmailGroup;
+            const hidden = !!isTempEmailGroup && !isMailSearchMode();
 
             if (container) {
                 container.classList.toggle('search-container--single', hidden);
@@ -1085,14 +1232,291 @@
             }
         }
 
-        function refreshVisibleAccountList(forceRefresh = false) {
-            if (currentGroupId && isTempEmailGroup) {
-                return loadTempEmails(forceRefresh);
+        function renderMailSearchGroupSummary(account) {
+            const groupName = normalizeGroupName(account?.group_name || '', '');
+            if (!groupName) {
+                return '';
+            }
+            const groupColor = account?.group_color || '#64748b';
+            return `
+                <div class="account-group-summary">
+                    <span class="account-group-dot" style="background-color: ${escapeHtml(groupColor)}"></span>
+                    <span class="account-group-name">${escapeHtml(groupName)}</span>
+                </div>
+            `;
+        }
+
+        function renderMailSearchAccountList(accounts) {
+            const container = document.getElementById('accountList');
+            const safeAccounts = Array.isArray(accounts) ? accounts : [];
+            currentAccountListSource = [...safeAccounts];
+            accountPaginationState = {
+                mode: 'mail-search',
+                key: mailSearchState.query,
+                total: safeAccounts.length,
+                loaded: safeAccounts.length,
+                hasMore: false,
+                loading: mailSearchState.loading
+            };
+
+            if (!container) {
+                return;
             }
 
+            if (safeAccounts.length === 0) {
+                container.innerHTML = renderEmptyStateMarkup('🔎', mailSearchState.query ? '未找到命中邮件' : '输入关键词搜索本地保留邮件');
+                updateBatchActionBar();
+                return;
+            }
+
+            const activeId = mailSearchState.activeAccountId === null ? null : Number(mailSearchState.activeAccountId);
+            container.innerHTML = safeAccounts.map(account => {
+                const accountId = Number(account.id);
+                const isActive = activeId !== null && activeId === accountId;
+                const latest = account.latest_match_at ? formatAbsoluteDateTime(account.latest_match_at) : '';
+                return `
+                    <div class="account-item mail-search-account-hit ${isActive ? 'active' : ''}"
+                         data-mail-search-account-id="${accountId}"
+                         onclick="toggleMailSearchAccountFilter(${accountId})">
+                        <span class="mail-search-hit-icon" aria-hidden="true">M</span>
+                        <div class="account-body">
+                            <div class="account-title-row">
+                                <div class="account-email-wrap">
+                                    <div class="account-email" title="${escapeHtml(account.email || '')}">
+                                        ${escapeHtml(account.email || '未知账号')}
+                                    </div>
+                                </div>
+                            </div>
+                            ${renderMailSearchGroupSummary(account)}
+                            <div class="mail-search-hit-summary">
+                                <span class="mail-search-count-pill">${Number(account.match_count) || 0} 封命中</span>
+                                ${latest ? `<span class="mail-search-latest" title="${escapeHtml(account.latest_match_at || '')}">最近 ${escapeHtml(latest)}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            updateBatchActionBar();
+        }
+
+        function resetMailSearchEmailDetail() {
+            currentEmailId = null;
+            currentEmailDetail = null;
+            const detailToolbar = document.getElementById('emailDetailToolbar');
+            const detail = document.getElementById('emailDetail');
+            if (detailToolbar) {
+                detailToolbar.style.display = 'none';
+            }
+            if (detail) {
+                detail.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📄</div>
+                        <div class="empty-state-text">选择一封邮件查看详情</div>
+                    </div>
+                `;
+            }
+        }
+
+        function prepareMailSearchEmailPanel(statusMessage = '') {
+            currentAccount = null;
+            currentFolder = 'all';
+            currentMethod = 'mail-search';
+
+            document.getElementById('currentAccount')?.classList.remove('show');
+            const currentAccountEmailEl = document.getElementById('currentAccountEmail');
+            if (currentAccountEmailEl) {
+                currentAccountEmailEl.textContent = '';
+            }
+
+            const folderTabs = document.getElementById('folderTabs');
+            if (folderTabs) {
+                folderTabs.style.display = 'none';
+            }
+            if (typeof hideNewMailNotice === 'function') {
+                hideNewMailNotice();
+            }
+            if (typeof setMailSyncStatus === 'function') {
+                setMailSyncStatus(statusMessage);
+            }
+            if (typeof showEmailList === 'function') {
+                showEmailList({ scheduleLoadCheck: false, closePanels: false });
+            }
+        }
+
+        function renderMailSearchEmailResults(data, emails, options = {}) {
+            prepareMailSearchEmailPanel(data?.message || '');
+            currentEmails = Array.isArray(emails) ? emails : [];
+            currentSkip = currentEmails.length;
+            hasMoreEmails = data?.has_more === true;
+            const total = Number(data?.total) || 0;
+            const activeAccount = mailSearchState.activeAccountId === null
+                ? null
+                : mailSearchState.accounts.find(account => Number(account.id) === Number(mailSearchState.activeAccountId));
+
+            if (typeof updateEmailListHeader === 'function') {
+                updateEmailListHeader('邮件搜索', total || currentEmails.length);
+                const countEl = document.getElementById('emailCount');
+                if (countEl && total > currentEmails.length) {
+                    countEl.textContent = `(${currentEmails.length}/${total})`;
+                }
+            }
+
+            const headerText = activeAccount
+                ? `${activeAccount.email || '账号'} 命中 (${currentEmails.length}/${total || currentEmails.length})`
+                : `邮件搜索 (${currentEmails.length}/${total || currentEmails.length})`;
+            updateCurrentGroupHeader(null, headerText);
+
+            if (!options.append) {
+                resetMailSearchEmailDetail();
+            }
+
+            renderEmailList(currentEmails);
+            updateMobileContext();
+        }
+
+        function renderMailSearchEmptyState(message = '输入关键词搜索本地保留邮件') {
+            resetMailSearchState({ clearResults: true });
+            prepareMailSearchEmailPanel('');
+            renderMailSearchAccountList([]);
+            updateCurrentGroupHeader(null, '邮件搜索');
+            if (typeof updateEmailListHeader === 'function') {
+                updateEmailListHeader('邮件搜索', 0);
+            }
+            const emailList = document.getElementById('emailList');
+            if (emailList) {
+                emailList.innerHTML = renderEmptyStateMarkup('🔎', message);
+            }
+            resetMailSearchEmailDetail();
+            updateMobileContext();
+        }
+
+        async function searchMailContents(query = null, forceRefresh = false, append = false) {
+            const normalizedQuery = String(query === null ? mailSearchState.query : query || '').trim();
+            const container = document.getElementById('accountList');
+
+            if (!normalizedQuery) {
+                renderMailSearchEmptyState();
+                return;
+            }
+
+            if (getAccountSearchTerms(normalizedQuery).length > ACCOUNT_SEARCH_MAX_TERMS) {
+                const message = '搜索关键词最多支持 200 个';
+                if (container) {
+                    container.innerHTML = `<div class="empty-state"><div class="empty-state-text">${escapeHtml(message)}</div></div>`;
+                }
+                showToast(message, 'warning');
+                return;
+            }
+
+            const queryChanged = normalizedQuery !== mailSearchState.query;
+            if (!append && queryChanged) {
+                mailSearchState.activeAccountId = null;
+            }
+
+            const offset = append ? mailSearchState.emails.length : 0;
+            if (mailSearchState.loading) {
+                return;
+            }
+            mailSearchState.loading = true;
+            const requestId = ++mailSearchRequestSeq;
+
+            if (!append) {
+                if (container) {
+                    container.innerHTML = '<div class="loading loading-small"><div class="loading-spinner"></div></div>';
+                }
+                const emailList = document.getElementById('emailList');
+                if (emailList) {
+                    emailList.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
+                }
+                resetMailSearchEmailDetail();
+            }
+
+            const params = new URLSearchParams({
+                q: normalizedQuery,
+                folder: 'all',
+                limit: String(MAIL_SEARCH_EMAIL_LIMIT),
+                offset: String(offset)
+            });
+            if (getAccountSearchScope() === 'group' && currentGroupId) {
+                params.set('group_id', String(currentGroupId));
+            }
+            if (mailSearchState.activeAccountId !== null) {
+                params.set('account_id', String(mailSearchState.activeAccountId));
+            }
+
+            try {
+                const response = await fetch(`/api/emails/search?${params.toString()}`);
+                const data = await response.json();
+                if (requestId !== mailSearchRequestSeq) {
+                    return;
+                }
+
+                if (!data.success) {
+                    const message = data.error || '邮件搜索失败';
+                    if (container) {
+                        container.innerHTML = renderEmptyStateMarkup('⚠️', message);
+                    }
+                    document.getElementById('emailList').innerHTML = renderEmptyStateMarkup('⚠️', message);
+                    return;
+                }
+
+                const nextEmails = append
+                    ? mailSearchState.emails.concat(data.emails || [])
+                    : (data.emails || []);
+                mailSearchState = {
+                    query: normalizedQuery,
+                    accounts: data.accounts || [],
+                    emails: nextEmails,
+                    activeAccountId: mailSearchState.activeAccountId,
+                    total: Number(data.total) || 0,
+                    hasMore: data.has_more === true,
+                    loading: false
+                };
+                renderMailSearchAccountList(mailSearchState.accounts);
+                renderMailSearchEmailResults(data, nextEmails, { append });
+            } catch (error) {
+                console.error('邮件搜索失败:', error);
+                if (append) {
+                    showToast('加载更多邮件搜索结果失败', 'error');
+                } else {
+                    if (container) {
+                        container.innerHTML = renderEmptyStateMarkup('⚠️', '邮件搜索失败，请重试');
+                    }
+                    const emailList = document.getElementById('emailList');
+                    if (emailList) {
+                        emailList.innerHTML = renderEmptyStateMarkup('⚠️', '邮件搜索失败，请重试');
+                    }
+                }
+            } finally {
+                if (requestId === mailSearchRequestSeq) {
+                    mailSearchState.loading = false;
+                }
+            }
+        }
+
+        function toggleMailSearchAccountFilter(accountId) {
+            const normalizedAccountId = Number(accountId);
+            if (!Number.isFinite(normalizedAccountId) || normalizedAccountId <= 0) {
+                return;
+            }
+
+            mailSearchState.activeAccountId = Number(mailSearchState.activeAccountId) === normalizedAccountId
+                ? null
+                : normalizedAccountId;
+            searchMailContents(mailSearchState.query, true, false);
+        }
+
+        function refreshVisibleAccountList(forceRefresh = false) {
             const searchQuery = (document.getElementById('globalSearch')?.value || '').trim();
             if (searchQuery) {
                 return searchAccounts(searchQuery, forceRefresh);
+            }
+            if (isMailSearchMode()) {
+                renderMailSearchEmptyState();
+                return Promise.resolve();
+            }
+            if (currentGroupId && isTempEmailGroup) {
+                return loadTempEmails(forceRefresh);
             }
             if (currentGroupId) {
                 return loadAccountsByGroup(currentGroupId, forceRefresh);
@@ -1269,6 +1693,10 @@
         // 全局搜索函数
         async function searchAccounts(query, forceRefresh = false, append = false) {
             const container = document.getElementById('accountList');
+
+            if (isMailSearchMode()) {
+                return searchMailContents(query, forceRefresh, append);
+            }
 
             if (!query.trim()) {
                 const currentGroup = groups.find(group => group.id === currentGroupId);
