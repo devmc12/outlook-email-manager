@@ -1239,6 +1239,36 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertTrue(refreshed_payload['success'])
         self.assertEqual(refreshed_payload['settings']['show_account_sort_order'], 'false')
 
+    def test_settings_verification_code_copy_roundtrips_default_enabled(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute("DELETE FROM settings WHERE key = 'verification_code_copy_enabled'")
+            db.commit()
+            web_outlook_app.init_db()
+
+        response = self.client.get('/api/settings')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['settings']['verification_code_copy_enabled'], 'true')
+
+        update_response = self.client.put(
+            '/api/settings',
+            json={'verification_code_copy_enabled': False}
+        )
+        self.assertEqual(update_response.status_code, 200)
+        update_payload = update_response.get_json()
+        self.assertTrue(update_payload['success'])
+
+        with self.app.app_context():
+            self.assertEqual(web_outlook_app.get_setting('verification_code_copy_enabled'), 'false')
+
+        refreshed_response = self.client.get('/api/settings')
+        self.assertEqual(refreshed_response.status_code, 200)
+        refreshed_payload = refreshed_response.get_json()
+        self.assertTrue(refreshed_payload['success'])
+        self.assertEqual(refreshed_payload['settings']['verification_code_copy_enabled'], 'false')
+
     def test_webdav_backup_settings_require_login_password_when_changed(self):
         with self.app.app_context():
             web_outlook_app.set_setting('login_password', web_outlook_app.hash_password('current-password'))
@@ -1972,6 +2002,32 @@ class FrontendEmailListSecurityTests(unittest.TestCase):
         self.assertIn('toggleEmailSelection(checkboxWrapper.dataset.emailId);', self.emails_js)
         self.assertIn('class="email-checkbox-wrapper" data-email-id=', self.emails_js)
 
+    def test_verification_code_copy_button_uses_delegated_clicks(self):
+        self.assertIn('function findVerificationCode(email = {})', self.emails_js)
+        self.assertIn("typeof isVerificationCodeCopyEnabled === 'function' && isVerificationCodeCopyEnabled()", self.emails_js)
+        self.assertIn('? findVerificationCode(email)', self.emails_js)
+        self.assertIn('class="email-verification-code-btn"', self.emails_js)
+        self.assertIn('data-verification-code="${escapeHtml(verificationCode)}"', self.emails_js)
+        self.assertIn('title="复制验证码 ${escapeHtml(verificationCode)}"', self.emails_js)
+        self.assertIn("event.target.closest('.email-verification-code-btn[data-verification-code]')", self.emails_js)
+        self.assertIn("copyTextToClipboard(verificationCode, '验证码已复制');", self.emails_js)
+        self.assertNotIn('onclick="copyVerificationCode', self.emails_js)
+        self.assertNotIn('onclick="${verificationCodeButton}', self.emails_js)
+
+    def test_verification_code_button_styles_keep_subject_flexible(self):
+        email_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '05-email-content.css').read_text(encoding='utf-8')
+        responsive_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '08-responsive.css').read_text(encoding='utf-8')
+
+        self.assertIn('.email-subject-row {', email_css)
+        self.assertIn('display: flex;', email_css[email_css.index('.email-subject-row {'):])
+        self.assertIn('.email-verification-code-btn {', email_css)
+        self.assertIn('flex: 0 0 auto;', email_css)
+        self.assertIn('font-variant-numeric: tabular-nums;', email_css)
+        self.assertIn('background: #dbeafe;', email_css)
+        self.assertIn('color: #1d4ed8;', email_css)
+        self.assertNotIn('color: #b91c1c;', email_css)
+        self.assertIn('.email-verification-code-btn {', responsive_css)
+
     def test_detail_load_error_message_is_rendered_as_text(self):
         self.assertNotIn("${data.error && data.error.message ? data.error.message : '加载失败'}", self.emails_js)
         self.assertIn("const errorText = container.querySelector('.empty-state-text');", self.emails_js)
@@ -2230,6 +2286,9 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn("document.getElementById('settingsShowGroupId').checked = String(data.settings.show_group_id) !== 'false';", settings_js)
         self.assertIn('settings.show_group_id = showGroupId;', settings_js)
         self.assertIn("setShowGroupId(String(data?.settings?.show_group_id) !== 'false');", core_js)
+        self.assertIn("setVerificationCodeCopyEnabled(String(data?.settings?.verification_code_copy_enabled) !== 'false');", core_js)
+        self.assertIn('const verificationCodeCopyEnabled = String(data.settings.verification_code_copy_enabled) !== \'false\';', settings_js)
+        self.assertIn('settings.verification_code_copy_enabled = verificationCodeCopyEnabled;', settings_js)
         self.assertIn('if (!shouldShowGroupId()) {', core_js)
 
     def test_settings_ui_reorganizes_general_and_gptmail_sections(self):
@@ -2242,6 +2301,7 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn('id="settingsPassword"', general_section)
         self.assertIn('id="settingsExternalApiKey"', general_section)
         self.assertIn('id="settingsShowGroupId"', general_section)
+        self.assertIn('id="settingsVerificationCodeCopyEnabled"', general_section)
         self.assertNotIn('id="settingsApiKey"', general_section)
 
         self.assertIn('id="settingsApiKey"', gptmail_section)

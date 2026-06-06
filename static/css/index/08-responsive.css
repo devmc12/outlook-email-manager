@@ -374,6 +374,18 @@
                 padding: 4px 0 16px;
             }
 
+            .email-subject-row {
+                gap: 6px;
+            }
+
+            .email-verification-code-btn {
+                min-width: 50px;
+                max-width: 76px;
+                min-height: 23px;
+                padding: 2px 7px;
+                font-size: 11px;
+            }
+
             .email-detail-toolbar {
                 padding: 8px 8px;
                 gap: 6px;

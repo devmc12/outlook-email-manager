@@ -437,6 +437,7 @@ def api_get_settings():
     settings['show_account_created_at'] = get_setting('show_account_created_at', 'true')
     settings['show_account_sort_order'] = get_setting('show_account_sort_order', 'false')
     settings['show_group_id'] = get_setting('show_group_id', 'true')
+    settings['verification_code_copy_enabled'] = get_setting('verification_code_copy_enabled', 'true')
     settings['normal_mail_local_retention_enabled'] = get_setting(
         'normal_mail_local_retention_enabled',
         'false',
@@ -647,6 +648,16 @@ def api_update_settings():
                 errors.append('更新组ID展示失败')
         else:
             errors.append('组ID展示必须是 true 或 false')
+
+    if 'verification_code_copy_enabled' in data:
+        verification_code_copy_enabled = str(data['verification_code_copy_enabled']).lower()
+        if verification_code_copy_enabled in ('true', 'false'):
+            if set_setting('verification_code_copy_enabled', verification_code_copy_enabled):
+                updated.append('验证码复制')
+            else:
+                errors.append('更新验证码复制失败')
+        else:
+            errors.append('验证码复制必须是 true 或 false')
 
     if 'normal_mail_local_retention_enabled' in data:
         retention_enabled = str(data['normal_mail_local_retention_enabled']).strip().lower()

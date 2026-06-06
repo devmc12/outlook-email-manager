@@ -1,4 +1,4 @@
-        /* global EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
+        /* global EMAIL_DETAIL_REQUEST_TIMEOUT_MS, EMAIL_LIST_REQUEST_TIMEOUT_MS, adjustIframeHeight, applyEmailListCache, closeMobilePanels, closeNavbarActionsMenu, copyCurrentEmail, currentAccount, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentMethod, currentSkip, emailListCache, escapeHtml, fetchWithTimeout, formatDate, getEmailListCacheEntry, getFolderDisplayName, getNextEmailSkipFromCache, handleApiError, hasMoreEmails, invalidateEmailListCache, isNormalMailLocalRetentionEnabled, isTempEmailGroup, isTimeoutAbortError, isVerificationCodeCopyEnabled, loadCloudflareGlobalMessages, mergeFolderSummaries, normalizeFolderSummaries, renderCloudflareGlobalFilterBar, renderEmptyStateMarkup, scheduleEmailListLoadCheck, showMobileEmailDetail, showToast, updateMobileContext, updateModalBodyState */
 
         // ==================== 邮件相关 ====================
 
@@ -11,6 +11,8 @@
         const normalDetailIframeResizeResources = { timers: [], observer: null };
         const fullscreenIframeResizeResources = { timers: [], observer: null };
         const NEW_EMAIL_HIGHLIGHT_CLEAR_DELAY_MS = 3500;
+        const VERIFICATION_CODE_CONTEXT_PATTERN = /(验证码|校验码|动态码|安全码|登录代码|登录码|临时代码|一次性(?:代码|密码)|验证代码|认证码|確認コード|認証コード|verification\s*code|security\s*code|login\s*code|temporary\s*(?:code|login\s*code|verification\s*code)|one[-\s]*time\s*(?:code|passcode|password)|otp|passcode|auth(?:entication)?\s*code|confirm(?:ation)?\s*code|access\s*code|email\s*verification\s*code)/i;
+        const VERIFICATION_CODE_CANDIDATE_PATTERN = /(^|[^A-Za-z0-9])([A-Za-z0-9]{4,8})(?=$|[^A-Za-z0-9])/g;
 
         function cleanupIframeResizeResources(resources) {
             (resources.timers || []).forEach(timerId => window.clearTimeout(timerId));
@@ -27,6 +29,105 @@
 
         function cleanupFullscreenIframeResizeResources() {
             cleanupIframeResizeResources(fullscreenIframeResizeResources);
+        }
+
+        function getVerificationSearchTextValue(value) {
+            return String(value || '')
+                .replace(/<[^>]+>/g, '\n')
+                .replace(/&nbsp;/gi, ' ')
+                .replace(/\r\n?/g, '\n')
+                .replace(/[ \t\f\v]+/g, ' ')
+                .replace(/\n\s+/g, '\n')
+                .replace(/\s+\n/g, '\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+        }
+
+        function isPlausibleVerificationCodeCandidate(code) {
+            if (!/^[A-Za-z0-9]{4,8}$/.test(code)) {
+                return false;
+            }
+            if (/^[A-Za-z]+$/.test(code)) {
+                return false;
+            }
+            if (/^\d{4}$/.test(code)) {
+                const numericCode = Number(code);
+                if (numericCode >= 1900 && numericCode <= 2099) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function scoreVerificationCodeCandidate(code, text, start, end, subjectHasContext, textHasContext) {
+            const before = text.slice(Math.max(0, start - 56), start);
+            const after = text.slice(end, Math.min(text.length, end + 40));
+            const nearbyText = `${before} ${after}`;
+            let score = 0;
+
+            if (VERIFICATION_CODE_CONTEXT_PATTERN.test(nearbyText)) {
+                score += 100;
+            }
+            if (subjectHasContext) {
+                score += 50;
+            }
+            if (/^\d{6}$/.test(code)) {
+                score += 30;
+            } else if (/^\d+$/.test(code)) {
+                score += 20;
+            } else if (/^(?:[A-Za-z]{2}\d{6}|[A-Za-z0-9]*\d[A-Za-z0-9]*)$/.test(code)) {
+                score += 14;
+            }
+            if (new RegExp(`(?:^|\\n)\\s*${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*(?:\\n|$)`).test(text)) {
+                score += 15;
+            }
+            if (textHasContext) {
+                score += 10;
+            }
+
+            return score;
+        }
+
+        function findVerificationCode(email = {}) {
+            const subject = getVerificationSearchTextValue(email.subject);
+            const preview = getVerificationSearchTextValue(email.body_preview || email.bodyPreview);
+            const body = getVerificationSearchTextValue(email.body);
+            const text = [subject, preview, body].filter(Boolean).join('\n');
+
+            if (!text || !VERIFICATION_CODE_CONTEXT_PATTERN.test(text)) {
+                return '';
+            }
+
+            const subjectHasContext = VERIFICATION_CODE_CONTEXT_PATTERN.test(subject);
+            const textHasContext = VERIFICATION_CODE_CONTEXT_PATTERN.test(text);
+            const candidates = [];
+            let match;
+
+            VERIFICATION_CODE_CANDIDATE_PATTERN.lastIndex = 0;
+            while ((match = VERIFICATION_CODE_CANDIDATE_PATTERN.exec(text)) !== null) {
+                const code = match[2];
+                if (!isPlausibleVerificationCodeCandidate(code)) {
+                    continue;
+                }
+
+                const start = match.index + match[1].length;
+                const end = start + code.length;
+                const score = scoreVerificationCodeCandidate(
+                    code,
+                    text,
+                    start,
+                    end,
+                    subjectHasContext,
+                    textHasContext
+                );
+
+                if (score >= 60) {
+                    candidates.push({ code, score, start });
+                }
+            }
+
+            candidates.sort((a, b) => b.score - a.score || a.start - b.start);
+            return candidates[0]?.code || '';
         }
 
         function getNormalMailboxRemoteMethod() {
@@ -901,6 +1002,12 @@
                 const sourceLabel = getEmailSourceLabel(email);
                 const hasAttachments = Boolean(email.has_attachments);
                 const isNewlySynced = highlightedNewEmailKeys.has(getEmailMessageStableKey(email));
+                const verificationCode = typeof isVerificationCodeCopyEnabled === 'function' && isVerificationCodeCopyEnabled()
+                    ? findVerificationCode(email)
+                    : '';
+                const verificationCodeButton = verificationCode
+                    ? `<button class="email-verification-code-btn" type="button" data-verification-code="${escapeHtml(verificationCode)}" title="复制验证码 ${escapeHtml(verificationCode)}">${escapeHtml(verificationCode)}</button>`
+                    : '';
                 return `
                 <div class="email-item ${email.is_read === false ? 'unread' : ''} ${isActive ? 'active' : ''} ${isNewlySynced ? 'newly-synced' : ''}"
                      data-email-id="${escapeHtml(String(email.id || ''))}"
@@ -921,7 +1028,10 @@
                             </div>
                             <div class="email-date">${formatDate(email.date)}</div>
                         </div>
-                        <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
+                        <div class="email-subject-row">
+                            <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
+                            ${verificationCodeButton}
+                        </div>
                         <div class="email-preview">${escapeHtml((email.body_preview || '').trim() || '暂无预览内容')}</div>
                     </div>
                 </div>
@@ -931,6 +1041,17 @@
         }
 
         function handleEmailListClick(event) {
+            const verificationCodeButton = event.target.closest('.email-verification-code-btn[data-verification-code]');
+            if (verificationCodeButton) {
+                event.preventDefault();
+                event.stopPropagation();
+                const verificationCode = verificationCodeButton.dataset.verificationCode || '';
+                if (verificationCode) {
+                    copyTextToClipboard(verificationCode, '验证码已复制');
+                }
+                return;
+            }
+
             const checkboxWrapper = event.target.closest('.email-checkbox-wrapper[data-email-id]');
             if (checkboxWrapper) {
                 event.stopPropagation();
