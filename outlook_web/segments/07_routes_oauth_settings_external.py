@@ -204,6 +204,7 @@ NORMAL_MAIL_RETENTION_TEXT_COLUMNS = (
     'attachments_json',
     'list_cached_at',
     'body_cached_at',
+    'forward_poll_cached_at',
     'last_synced_at',
     'created_at',
     'updated_at',

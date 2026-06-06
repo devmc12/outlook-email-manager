@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import time
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
@@ -387,6 +387,58 @@ def fetch_forward_detail(account: Dict[str, Any], message_id: str, folder: str =
     }
 
 
+def cache_forward_poll_candidates_for_retention(account: Dict[str, Any], folder: str,
+                                                items: List[Dict[str, Any]], db_conn=None) -> int:
+    if not items or not is_normal_mail_local_retention_enabled():
+        return 0
+    try:
+        return upsert_retained_normal_mail_forward_poll_items(
+            account, folder, items, db=db_conn, commit=False
+        )
+    except Exception as exc:
+        app.logger.warning(
+            '[forward] retain candidates failed: account=%s folder=%s error=%s',
+            account.get('email', ''),
+            folder,
+            str(exc),
+        )
+        return 0
+
+
+def cache_forward_poll_detail_for_retention(account: Dict[str, Any], item: Dict[str, Any],
+                                            detail: Dict[str, Any], db_conn=None) -> bool:
+    if not detail or not is_normal_mail_local_retention_enabled():
+        return False
+    folder = normalize_folder_name(item.get('folder', 'inbox'))
+    message_id = str(item.get('id') or detail.get('id') or '').strip()
+    if not message_id:
+        return False
+    detail_source = 'imap' if account.get('account_type') == 'imap' else 'graph'
+    method = detail_source
+    id_mode = str(item.get('id_mode') or '').strip().lower()
+    try:
+        return upsert_retained_normal_mail_forward_poll_detail(
+            account,
+            folder,
+            message_id,
+            detail,
+            method,
+            detail_source,
+            id_mode,
+            db=db_conn,
+            commit=False,
+        )
+    except Exception as exc:
+        app.logger.warning(
+            '[forward] retain detail failed: account=%s message_id=%s folder=%s error=%s',
+            account.get('email', ''),
+            message_id,
+            folder,
+            str(exc),
+        )
+        return False
+
+
 def process_forwarding_job():
     with app.app_context():
         conn = sqlite3.connect(DATABASE)
@@ -471,7 +523,9 @@ def process_forwarding_job():
                             folder_result.get('error') or 'unknown',
                         )
                         continue
-                    emails.extend(folder_result.get('emails', []))
+                    folder_emails = folder_result.get('emails', [])
+                    cache_forward_poll_candidates_for_retention(account, folder_name, folder_emails, conn)
+                    emails.extend(folder_emails)
                 recent_emails = []
                 skipped_before_cursor = 0
                 email_success_count = 0
@@ -530,6 +584,7 @@ def process_forwarding_job():
                             item.get('id', ''),
                         )
                         continue
+                    cache_forward_poll_detail_for_retention(account, item, detail, conn)
                     title, plain, html_body, telegram_text = build_forward_payload(account, detail)
                     message_processed = False
                     message_failed = False
