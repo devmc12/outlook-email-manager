@@ -6,6 +6,9 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+### Fixed
+- 修复邮件内容搜索后的命中账号列表偏离原账号卡 UI 的问题；恢复原有更多操作菜单、账号状态/分组/别名/标签/时间信息和批量多选流程，仅额外显示“X 封命中”标签。
+
 ## [2.0.63+4] - 2026-06-07
 
 ### Added
