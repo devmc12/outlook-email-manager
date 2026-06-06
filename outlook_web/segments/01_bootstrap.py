@@ -1749,7 +1749,15 @@ def init_db():
     ''')
     cursor.execute('''
         INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('verification_code_copy_enabled', 'true')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
         VALUES ('normal_mail_local_retention_enabled', 'false')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('normal_mail_local_retention_auto_show_new_mail', 'false')
     ''')
 
     cursor.execute('''

@@ -106,6 +106,22 @@
                 <!-- 分组列表将通过 JS 动态加载 -->
             </div>
         </div>
+        <button class="group-panel-collapse-handle" id="groupPanelCollapseHandle" type="button"
+            aria-label="折叠分组面板" aria-controls="groupPanel" title="折叠分组面板"
+            onclick="collapseGroupPanel()">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10 4 6 8l4 4"></path>
+            </svg>
+        </button>
+        <button class="group-panel-expand-handle" id="groupPanelExpandHandle" type="button"
+            aria-label="展开分组面板" aria-controls="groupPanel" title="展开分组面板"
+            onclick="expandGroupPanel()" hidden>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"
+                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m6 4 4 4-4 4"></path>
+            </svg>
+        </button>
 
         <!-- 邮箱账号面板 -->
         <div class="account-panel" id="accountPanel">

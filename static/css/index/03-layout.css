@@ -1,6 +1,8 @@
         /* 主容器 */
         .main-container {
+            --group-panel-width: 200px;
             display: flex;
+            position: relative;
             margin-top: 56px;
             height: calc(100vh - 56px);
             min-height: 0;
@@ -63,13 +65,141 @@
 
         /* 分组面板 */
         .group-panel {
-            width: 200px;
+            width: var(--group-panel-width);
             background-color: #fafafa;
             border-right: 1px solid #e5e5e5;
             display: flex;
             flex-direction: column;
             flex-shrink: 0;
             min-height: 0;
+        }
+
+        .group-panel-collapse-handle,
+        .group-panel-expand-handle {
+            display: none;
+        }
+
+        .group-panel-collapse-handle[hidden],
+        .group-panel-expand-handle[hidden] {
+            display: none !important;
+        }
+
+        @media (min-width: 769px) {
+            .group-panel {
+                overflow: hidden;
+                transition: width 0.24s ease, border-color 0.18s ease;
+                will-change: width;
+            }
+
+            .group-panel > .panel-header,
+            .group-panel > .group-list {
+                width: var(--group-panel-width);
+                max-width: var(--group-panel-width);
+                transition: opacity 0.16s ease;
+            }
+
+            .group-panel-collapse-handle,
+            .group-panel-expand-handle {
+                align-items: center;
+                justify-content: center;
+                padding: 0;
+                border: 1px solid #dbe3ee;
+                background: rgba(255, 255, 255, 0.94);
+                color: #64748b;
+                box-shadow: 0 10px 26px rgba(15, 23, 42, 0.12);
+                cursor: pointer;
+                z-index: 125;
+                transition: opacity 0.16s ease, transform 0.2s ease, background-color 0.15s ease,
+                    border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+            }
+
+            .group-panel-collapse-handle {
+                display: inline-flex;
+                position: absolute;
+                top: 50%;
+                left: calc(var(--group-panel-width) - 1px);
+                width: 13px;
+                height: 58px;
+                border-radius: 0 9px 9px 0;
+                opacity: 0;
+                pointer-events: none;
+                transform: translate(4px, -50%);
+            }
+
+            .group-panel-collapse-handle svg {
+                width: 10px;
+                height: 10px;
+            }
+
+            .group-panel:hover + .group-panel-collapse-handle,
+            .group-panel:focus-within + .group-panel-collapse-handle,
+            .group-panel-collapse-handle:hover,
+            .group-panel-collapse-handle:focus-visible {
+                opacity: 0.9;
+                pointer-events: auto;
+                transform: translate(0, -50%);
+            }
+
+            .group-panel-collapse-handle:hover,
+            .group-panel-collapse-handle:focus-visible,
+            .group-panel-expand-handle:hover,
+            .group-panel-expand-handle:focus-visible {
+                background: #111827;
+                border-color: #111827;
+                color: #ffffff;
+                box-shadow: 0 12px 28px rgba(15, 23, 42, 0.2);
+                outline: none;
+            }
+
+            .group-panel-expand-handle {
+                display: inline-flex;
+                position: fixed;
+                top: calc(56px + ((100vh - 56px) / 2));
+                left: 0;
+                width: 22px;
+                height: 58px;
+                border-left: 0;
+                border-radius: 0 13px 13px 0;
+                transform: translateY(-50%);
+            }
+
+            .group-panel-expand-handle svg {
+                width: 14px;
+                height: 14px;
+            }
+
+            .group-panel-expand-handle:hover,
+            .group-panel-expand-handle:focus-visible {
+                transform: translateY(-50%) translateX(2px);
+            }
+
+            .main-container.is-group-panel-collapsed .group-panel {
+                width: 0;
+                min-width: 0;
+                border-right-width: 0;
+                border-right-color: transparent;
+            }
+
+            .main-container.is-group-panel-collapsed .group-panel > .panel-header,
+            .main-container.is-group-panel-collapsed .group-panel > .group-list {
+                opacity: 0;
+                pointer-events: none;
+            }
+
+            .main-container.is-group-panel-collapsed .group-panel-collapse-handle {
+                opacity: 0;
+                pointer-events: none;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) and (min-width: 769px) {
+            .group-panel,
+            .group-panel > .panel-header,
+            .group-panel > .group-list,
+            .group-panel-collapse-handle,
+            .group-panel-expand-handle {
+                transition: none;
+            }
         }
 
         .panel-header {

@@ -1775,6 +1775,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | `telegram_bot_token` | Telegram Bot Token |
 | `telegram_chat_id` | Telegram Chat ID |
 | `normal_mail_local_retention_enabled` | 是否启用普通邮箱本地保留 |
+| `normal_mail_local_retention_auto_show_new_mail` | 本地保留后台同步发现新邮件后是否自动展示 |
 
 ### PUT `/api/settings`
 
@@ -1796,6 +1797,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | `show_account_sort_order` | bool | 是否在邮箱列表展示自定义排序值 |
 | `external_api_key` | string | 对外 API Key，可传空字符串清空 |
 | `normal_mail_local_retention_enabled` | bool/string | 是否启用普通邮箱本地保留；通过 `/api/settings` 更新会同步刷新后端进程内读取缓存 |
+| `normal_mail_local_retention_auto_show_new_mail` | bool/string | 是否在本地保留后台同步发现新邮件后自动合并展示；默认关闭 |
 
 #### 临时邮箱服务相关字段
 

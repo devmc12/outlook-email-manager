@@ -437,8 +437,13 @@ def api_get_settings():
     settings['show_account_created_at'] = get_setting('show_account_created_at', 'true')
     settings['show_account_sort_order'] = get_setting('show_account_sort_order', 'false')
     settings['show_group_id'] = get_setting('show_group_id', 'true')
+    settings['verification_code_copy_enabled'] = get_setting('verification_code_copy_enabled', 'true')
     settings['normal_mail_local_retention_enabled'] = get_setting(
         'normal_mail_local_retention_enabled',
+        'false',
+    )
+    settings['normal_mail_local_retention_auto_show_new_mail'] = get_setting(
+        'normal_mail_local_retention_auto_show_new_mail',
         'false',
     )
     settings['forward_channels'] = get_forward_channels()
@@ -648,6 +653,16 @@ def api_update_settings():
         else:
             errors.append('组ID展示必须是 true 或 false')
 
+    if 'verification_code_copy_enabled' in data:
+        verification_code_copy_enabled = str(data['verification_code_copy_enabled']).lower()
+        if verification_code_copy_enabled in ('true', 'false'):
+            if set_setting('verification_code_copy_enabled', verification_code_copy_enabled):
+                updated.append('验证码复制')
+            else:
+                errors.append('更新验证码复制失败')
+        else:
+            errors.append('验证码复制必须是 true 或 false')
+
     if 'normal_mail_local_retention_enabled' in data:
         retention_enabled = str(data['normal_mail_local_retention_enabled']).strip().lower()
         if retention_enabled in ('true', 'false'):
@@ -662,6 +677,20 @@ def api_update_settings():
                 errors.append('更新普通邮箱本地保留开关失败')
         else:
             errors.append('普通邮箱本地保留开关必须是 true 或 false')
+
+    if 'normal_mail_local_retention_auto_show_new_mail' in data:
+        auto_show_new_mail = str(data['normal_mail_local_retention_auto_show_new_mail']).strip().lower()
+        if auto_show_new_mail in ('true', 'false'):
+            normalized_auto_show_new_mail = normalize_bool_setting_value(auto_show_new_mail)
+            if set_setting(
+                'normal_mail_local_retention_auto_show_new_mail',
+                normalized_auto_show_new_mail,
+            ):
+                updated.append('普通邮箱本地保留自动展示新邮件')
+            else:
+                errors.append('更新普通邮箱本地保留自动展示新邮件失败')
+        else:
+            errors.append('普通邮箱本地保留自动展示新邮件必须是 true 或 false')
 
     # 更新对外 API Key
     if 'external_api_key' in data:

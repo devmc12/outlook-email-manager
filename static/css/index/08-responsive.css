@@ -1,7 +1,11 @@
         /* 响应式 */
         @media (max-width: 1200px) {
+            .main-container {
+                --group-panel-width: 180px;
+            }
+
             .group-panel {
-                width: 180px;
+                width: var(--group-panel-width);
             }
 
             .account-panel {
@@ -14,8 +18,12 @@
         }
 
         @media (max-width: 1024px) {
+            .main-container {
+                --group-panel-width: 160px;
+            }
+
             .group-panel {
-                width: 160px;
+                width: var(--group-panel-width);
             }
 
             .account-panel {
@@ -364,6 +372,18 @@
 
             .email-list {
                 padding: 4px 0 16px;
+            }
+
+            .email-subject-row {
+                gap: 6px;
+            }
+
+            .email-verification-code-btn {
+                min-width: 50px;
+                max-width: 76px;
+                min-height: 23px;
+                padding: 2px 7px;
+                font-size: 11px;
             }
 
             .email-detail-toolbar {

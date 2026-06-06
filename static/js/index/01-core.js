@@ -54,6 +54,8 @@
         const VERSION_STATUS_REQUEST_TIMEOUT_MS = 12000;
         const DOCKER_UPDATE_REQUEST_TIMEOUT_MS = 20000;
         const UPDATE_NOTICE_SEEN_VERSION_KEY = 'outlook_update_notice_seen_latest_version';
+        const GROUP_PANEL_COLLAPSED_STORAGE_KEY = 'outlook_group_panel_collapsed';
+        const VERIFICATION_CODE_COPY_STORAGE_KEY = 'outlook_verification_code_copy_enabled';
         const DEFAULT_APP_TIME_ZONE = 'Asia/Shanghai';
         const FALLBACK_APP_TIME_ZONES = [
             'Asia/Shanghai',
@@ -74,6 +76,8 @@
         let showAccountSortOrder = false;
         let showGroupId = true;
         let normalMailLocalRetentionEnabled = false;
+        let normalMailLocalRetentionAutoShowNewMail = false;
+        let verificationCodeCopyEnabled = readStoredVerificationCodeCopyEnabled();
 
         function isUntaggedTagFilterValue(value) {
             return String(value || '').trim() === UNTAGGED_TAG_FILTER_KEY;
@@ -105,6 +109,115 @@
 
         function isMobileLayout() {
             return window.matchMedia('(max-width: 768px)').matches;
+        }
+
+        function readStoredGroupPanelCollapsed() {
+            try {
+                return localStorage.getItem(GROUP_PANEL_COLLAPSED_STORAGE_KEY) === 'true';
+            } catch (error) {
+                return false;
+            }
+        }
+
+        function storeGroupPanelCollapsed(collapsed) {
+            try {
+                localStorage.setItem(GROUP_PANEL_COLLAPSED_STORAGE_KEY, collapsed ? 'true' : 'false');
+            } catch (error) {
+                // localStorage may be unavailable in restricted browser contexts.
+            }
+        }
+
+        function readStoredVerificationCodeCopyEnabled() {
+            try {
+                const stored = localStorage.getItem(VERIFICATION_CODE_COPY_STORAGE_KEY);
+                return stored === null ? true : stored !== 'false';
+            } catch (error) {
+                return true;
+            }
+        }
+
+        function storeVerificationCodeCopyEnabled(enabled) {
+            try {
+                localStorage.setItem(VERIFICATION_CODE_COPY_STORAGE_KEY, enabled ? 'true' : 'false');
+            } catch (error) {
+                // localStorage may be unavailable in restricted browser contexts.
+            }
+        }
+
+        function setVerificationCodeCopyEnabled(enabled, persist = true) {
+            const nextEnabled = enabled !== false;
+            const changed = verificationCodeCopyEnabled !== nextEnabled;
+            verificationCodeCopyEnabled = nextEnabled;
+            if (persist) {
+                storeVerificationCodeCopyEnabled(verificationCodeCopyEnabled);
+            }
+            if (changed && currentEmails.length > 0 && typeof renderEmailList === 'function') {
+                renderEmailList(currentEmails);
+            }
+        }
+
+        function isVerificationCodeCopyEnabled() {
+            return verificationCodeCopyEnabled !== false;
+        }
+
+        function setGroupPanelCollapsed(collapsed, persist = true) {
+            const mobileActive = isMobileLayout();
+            const shouldCollapse = !!collapsed && !mobileActive;
+            const mainContainer = document.querySelector('.main-container');
+            const groupPanel = document.getElementById('groupPanel');
+            const collapseHandle = document.getElementById('groupPanelCollapseHandle');
+            const expandHandle = document.getElementById('groupPanelExpandHandle');
+
+            mainContainer?.classList.toggle('is-group-panel-collapsed', shouldCollapse);
+
+            if (groupPanel) {
+                groupPanel.setAttribute('aria-hidden', shouldCollapse ? 'true' : 'false');
+                if ('inert' in groupPanel) {
+                    groupPanel.inert = shouldCollapse;
+                }
+            }
+
+            if (collapseHandle) {
+                collapseHandle.hidden = mobileActive || shouldCollapse;
+                collapseHandle.setAttribute('aria-expanded', shouldCollapse ? 'false' : 'true');
+            }
+
+            if (expandHandle) {
+                expandHandle.hidden = !shouldCollapse;
+                expandHandle.setAttribute('aria-expanded', shouldCollapse ? 'false' : 'true');
+            }
+
+            if (persist) {
+                storeGroupPanelCollapsed(shouldCollapse);
+            }
+
+            scheduleEmailListLoadCheck(260);
+        }
+
+        function syncGroupPanelCollapseFromStorage() {
+            setGroupPanelCollapsed(readStoredGroupPanelCollapsed(), false);
+        }
+
+        function collapseGroupPanel() {
+            const groupPanel = document.getElementById('groupPanel');
+            const collapseHandle = document.getElementById('groupPanelCollapseHandle');
+            const focusWasInsideGroupPanel = (!!groupPanel && groupPanel.contains(document.activeElement))
+                || document.activeElement === collapseHandle;
+
+            setGroupPanelCollapsed(true);
+
+            if (focusWasInsideGroupPanel) {
+                document.getElementById('groupPanelExpandHandle')?.focus({ preventScroll: true });
+            }
+        }
+
+        function expandGroupPanel() {
+            setGroupPanelCollapsed(false);
+            document.getElementById('groupPanelCollapseHandle')?.focus({ preventScroll: true });
+        }
+
+        function initGroupPanelCollapse() {
+            syncGroupPanelCollapseFromStorage();
         }
 
         function isValidAppTimeZone(timeZone) {
@@ -175,6 +288,15 @@
 
         function isNormalMailLocalRetentionEnabled() {
             return normalMailLocalRetentionEnabled === true;
+        }
+
+        function setNormalMailLocalRetentionAutoShowNewMail(enabled) {
+            normalMailLocalRetentionAutoShowNewMail = enabled === true;
+            return normalMailLocalRetentionAutoShowNewMail;
+        }
+
+        function isNormalMailLocalRetentionAutoShowNewMailEnabled() {
+            return normalMailLocalRetentionAutoShowNewMail === true;
         }
 
         function parseDateInput(dateInput) {
@@ -935,6 +1057,8 @@
         window.toggleVersionPopover = toggleVersionPopover;
         window.copyAppVersion = copyAppVersion;
         window.startDockerUpdate = startDockerUpdate;
+        window.collapseGroupPanel = collapseGroupPanel;
+        window.expandGroupPanel = expandGroupPanel;
 
         function toggleNavbarActionsMenu() {
             if (!isMobileLayout()) return;
@@ -976,6 +1100,8 @@
         }
 
         function syncResponsiveUI() {
+            syncGroupPanelCollapseFromStorage();
+
             if (!isMobileLayout()) {
                 closeMobilePanels();
                 closeNavbarActionsMenu();
@@ -1127,6 +1253,8 @@
                 setShowAccountSortOrder(String(data?.settings?.show_account_sort_order) === 'true');
                 setShowGroupId(String(data?.settings?.show_group_id) !== 'false');
                 setNormalMailLocalRetentionEnabled(String(data?.settings?.normal_mail_local_retention_enabled) === 'true');
+                setNormalMailLocalRetentionAutoShowNewMail(String(data?.settings?.normal_mail_local_retention_auto_show_new_mail) === 'true');
+                setVerificationCodeCopyEnabled(String(data?.settings?.verification_code_copy_enabled) !== 'false');
                 return data?.settings || null;
             } catch (error) {
                 return null;
@@ -1144,6 +1272,7 @@
             document.addEventListener('click', handleGlobalChromeClick);
             document.addEventListener('click', handleGlobalTagFilterClick);
             document.addEventListener('click', handleGlobalImportTagClick);
+            initGroupPanelCollapse();
             document.getElementById('importImapHost')?.addEventListener('input', updateImportHint);
             document.getElementById('importImapPort')?.addEventListener('input', updateImportHint);
             document.getElementById('oauthEmailInput')?.addEventListener('input', invalidateRefreshTokenPreview);

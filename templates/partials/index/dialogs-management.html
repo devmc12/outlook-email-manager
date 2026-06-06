@@ -111,6 +111,13 @@
                                     </label>
                                     <div class="form-hint">关闭后，不再展示分组 ID 徽标。</div>
                                 </div>
+                                <div class="form-group">
+                                    <label class="settings-toggle settings-toggle--card">
+                                        <input type="checkbox" id="settingsVerificationCodeCopyEnabled" checked>
+                                        <span class="form-label">开启复制验证码</span>
+                                    </label>
+                                    <div class="form-hint">开启后，在邮件列表标题右侧显示识别出的验证码复制按钮。</div>
+                                </div>
                             </div>
                         </section>
 
@@ -204,12 +211,19 @@
                     </div>
                     <div class="settings-panel settings-panel-stack">
                         <div class="settings-panel-grid settings-panel-grid--compact">
-                            <div class="form-group settings-form-span-full">
+                            <div class="form-group">
                                 <label class="settings-toggle settings-toggle--card">
                                     <input type="checkbox" id="normalMailLocalRetentionEnabled">
                                     <span class="form-label">启用普通邮箱本地保留</span>
                                 </label>
                                 <div class="form-hint" id="normalMailLocalRetentionExplanation">默认关闭。开启后，普通 Outlook/IMAP 邮箱的列表元数据和已查看的部分正文会保存到本机 SQLite，用于本地优先加载与离线回看；不会保存附件二进制或原始 MIME。</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="settings-toggle settings-toggle--card">
+                                    <input type="checkbox" id="normalMailLocalRetentionAutoShowNewMail">
+                                    <span class="form-label">自动展示新邮件</span>
+                                </label>
+                                <div class="form-hint">默认关闭。开启后，后台同步发现新邮件时自动合并到当前邮件列表，不再等待点击提示条。</div>
                             </div>
                         </div>
 
