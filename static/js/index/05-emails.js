@@ -11,7 +11,31 @@
         const normalDetailIframeResizeResources = { timers: [], observer: null };
         const fullscreenIframeResizeResources = { timers: [], observer: null };
         const NEW_EMAIL_HIGHLIGHT_CLEAR_DELAY_MS = 3500;
-        const VERIFICATION_CODE_CONTEXT_PATTERN = /(验证码|校验码|动态码|安全码|登录代码|登录码|临时代码|一次性(?:代码|密码)|验证代码|认证码|確認コード|認証コード|verification\s*code|security\s*code|login\s*code|temporary\s*(?:code|login\s*code|verification\s*code)|one[-\s]*time\s*(?:code|passcode|password)|otp|passcode|auth(?:entication)?\s*code|confirm(?:ation)?\s*code|access\s*code|email\s*verification\s*code)/i;
+        const VERIFICATION_CODE_CONTEXT_PATTERNS = [
+            '验证码', '驗證碼', '验证代码', '驗證代碼', '校验码', '校驗碼', '动态码', '動態碼',
+            '安全码', '安全碼', '登录代码', '登入代碼', '登录码', '登入碼', '临时代码', '臨時代碼',
+            '一次性(?:代码|代碼|密码|密碼)', '认证码', '認證碼',
+            '確認コード', '認証コード', '検証コード', '一時検証コード', 'セキュリティコード',
+            'ログインコード', 'ワンタイム(?:コード|パスワード)',
+            '인증\\s*(?:코드|번호)', '확인\\s*(?:코드|번호)', '보안\\s*코드',
+            '로그인\\s*코드', '일회용\\s*(?:코드|비밀번호)',
+            'verification\\s*code', 'security\\s*code', 'login\\s*code',
+            'temporary\\s*(?:code|login\\s*code|verification\\s*code)',
+            'one[-\\s]*time\\s*(?:code|passcode|password)', '\\botp\\b', 'passcode',
+            'auth(?:entication)?\\s*code', 'confirm(?:ation)?\\s*code',
+            'access\\s*code', 'email\\s*verification\\s*code',
+            'codice\\s+(?:di\\s+)?(?:verifica|sicurezza|accesso|conferma|temporaneo|otp|monouso)',
+            'code\\s+(?:de\\s+|d[’\']\\s*|à\\s+usage\\s+unique|a\\s+usage\\s+unique)?(?:v[ée]rification|securite|sécurité|connexion|confirmation|temporaire|otp)',
+            'c[oó]digo\\s+(?:de\\s+)?(?:verificaci[oó]n|seguridad|acceso|confirmaci[oó]n|temporal|otp)',
+            'c[oó]digo\\s+(?:de\\s+)?(?:verifica[cç][aã]o|seguran[cç]a|acesso|confirma[cç][aã]o|tempor[aá]rio|otp)',
+            'contrase(?:ñ|n)a\\s+de\\s+un\\s+solo\\s+uso',
+            'senha\\s+de\\s+uso\\s+[uú]nico',
+            'رمز\\s+(?:التحقق|التأكيد|التاكيد|الأمان|الامان|الدخول|المصادقة|otp)',
+            '(?:كلمة|كلمه)\\s+مرور\\s+لمرة\\s+واحدة',
+            'код\\s+(?:подтверждения|проверки|безопасности|входа|доступа|аутентификации)',
+            'проверочный\\s+код', 'одноразов(?:ый|ая)\\s+(?:код|пароль)', 'временный\\s+код'
+        ];
+        const VERIFICATION_CODE_CONTEXT_PATTERN = new RegExp(VERIFICATION_CODE_CONTEXT_PATTERNS.join('|'), 'iu');
         const VERIFICATION_CODE_CANDIDATE_PATTERN = /(^|[^A-Za-z0-9])([A-Za-z0-9]{4,8})(?=$|[^A-Za-z0-9])/g;
 
         function cleanupIframeResizeResources(resources) {
@@ -31,8 +55,24 @@
             cleanupIframeResizeResources(fullscreenIframeResizeResources);
         }
 
+        function normalizeVerificationDigits(value) {
+            return String(value || '').replace(/[０-９٠-٩۰-۹]/g, char => {
+                const codePoint = char.charCodeAt(0);
+                if (codePoint >= 0xff10 && codePoint <= 0xff19) {
+                    return String(codePoint - 0xff10);
+                }
+                if (codePoint >= 0x0660 && codePoint <= 0x0669) {
+                    return String(codePoint - 0x0660);
+                }
+                if (codePoint >= 0x06f0 && codePoint <= 0x06f9) {
+                    return String(codePoint - 0x06f0);
+                }
+                return char;
+            });
+        }
+
         function getVerificationSearchTextValue(value) {
-            return String(value || '')
+            return normalizeVerificationDigits(value)
                 .replace(/<[^>]+>/g, '\n')
                 .replace(/&nbsp;/gi, ' ')
                 .replace(/\r\n?/g, '\n')

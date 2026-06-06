@@ -8,7 +8,7 @@ EMAILS_JS_PATH = ROOT_DIR / 'static' / 'js' / 'index' / '05-emails.js'
 
 
 def _extract_verification_code_helpers(source):
-    start = source.index('const VERIFICATION_CODE_CONTEXT_PATTERN')
+    start = source.index('const VERIFICATION_CODE_CONTEXT_PATTERNS')
     end = source.index('function getNormalMailboxRemoteMethod', start)
     return source[start:end]
 
@@ -55,6 +55,59 @@ def test_extracts_alphanumeric_access_code():
     })
 
     assert code == 'QZ524822'
+
+
+def test_extracts_multilingual_verification_codes():
+    codes = _find_verification_codes(
+        {
+            'subject': '您的登入驗證碼',
+            'body_preview': '您的驗證碼是 135790，請勿分享。'
+        },
+        {
+            'subject': '一時検証コード',
+            'body_preview': 'この一時検証コードを入力して続行してください:\n\n822779\n\n検証コードをリクエストしていない場合、このメールは無視してください。'
+        },
+        {
+            'subject': '인증 코드 안내',
+            'body_preview': '계속하려면 인증 코드를 입력하세요.\n\n384920'
+        },
+        {
+            'subject': 'Codice di verifica',
+            'body_preview': 'Il tuo codice di verifica è 583921.'
+        },
+        {
+            'subject': 'Code de vérification',
+            'body_preview': 'Votre code de vérification est 492013.'
+        },
+        {
+            'subject': 'رمز التحقق',
+            'body_preview': 'رمز التحقق الخاص بك هو ٨٢٢٧٧٩'
+        },
+        {
+            'subject': 'Código de verificación',
+            'body_preview': 'Tu código de verificación es 219048.'
+        },
+        {
+            'subject': 'Código de verificação',
+            'body_preview': 'Seu código de verificação é 310246.'
+        },
+        {
+            'subject': 'Код подтверждения',
+            'body_preview': 'Ваш код подтверждения: 741852'
+        },
+    )
+
+    assert codes == [
+        '135790',
+        '822779',
+        '384920',
+        '583921',
+        '492013',
+        '822779',
+        '219048',
+        '310246',
+        '741852',
+    ]
 
 
 def test_ignores_dates_account_numbers_and_numbers_without_code_context():
