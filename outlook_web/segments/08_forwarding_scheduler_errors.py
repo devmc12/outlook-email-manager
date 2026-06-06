@@ -1628,6 +1628,12 @@ def build_mail_content_search_cte(query: str, group_id: Optional[int],
                 a.account_type AS account_type,
                 a.provider AS provider,
                 a.status AS account_status,
+                a.forward_enabled AS forward_enabled,
+                a.remark AS account_remark,
+                a.sort_order AS account_sort_order,
+                a.created_at AS account_created_at,
+                a.last_refresh_status AS account_last_refresh_status,
+                a.last_refresh_error AS account_last_refresh_error,
                 g.name AS group_name,
                 g.color AS group_color,
                 ROW_NUMBER() OVER (
@@ -1685,6 +1691,12 @@ def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
             account_type,
             provider,
             account_status AS status,
+            forward_enabled,
+            account_remark,
+            account_sort_order,
+            account_created_at,
+            account_last_refresh_status,
+            account_last_refresh_error,
             COUNT(*) AS match_count,
             MAX(received_at_sort) AS latest_match_sort,
             (
@@ -1731,10 +1743,14 @@ def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
     ).fetchall()
 
     emails = [retained_mail_search_row_to_list_item(row) for row in rows[:limit]]
+    account_ids = [int(row['id']) for row in account_rows]
+    aliases_by_account = get_account_aliases_map(account_ids, db)
+    tags_by_account = get_account_tags_map(account_ids, db)
     accounts = []
     for row in account_rows:
+        account_id_value = int(row['id'])
         accounts.append({
-            'id': row['id'],
+            'id': account_id_value,
             'email': row['email'] or '',
             'group_id': row['group_id'],
             'group_name': row['group_name'] or '',
@@ -1742,6 +1758,14 @@ def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
             'account_type': row['account_type'] or 'outlook',
             'provider': row['provider'] or 'outlook',
             'status': row['status'] or 'active',
+            'forward_enabled': bool(row['forward_enabled']),
+            'remark': row['account_remark'] or '',
+            'sort_order': row['account_sort_order'],
+            'created_at': row['account_created_at'] or '',
+            'last_refresh_status': row['account_last_refresh_status'] or '',
+            'last_refresh_error': row['account_last_refresh_error'] or '',
+            'aliases': aliases_by_account.get(account_id_value, []),
+            'tags': tags_by_account.get(account_id_value, []),
             'match_count': int(row['match_count'] or 0),
             'latest_match_at': row['latest_match_at'] or '',
         })

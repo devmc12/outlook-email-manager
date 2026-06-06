@@ -1232,20 +1232,6 @@
             }
         }
 
-        function renderMailSearchGroupSummary(account) {
-            const groupName = normalizeGroupName(account?.group_name || '', '');
-            if (!groupName) {
-                return '';
-            }
-            const groupColor = account?.group_color || '#64748b';
-            return `
-                <div class="account-group-summary">
-                    <span class="account-group-dot" style="background-color: ${escapeHtml(groupColor)}"></span>
-                    <span class="account-group-name">${escapeHtml(groupName)}</span>
-                </div>
-            `;
-        }
-
         function renderMailSearchAccountList(accounts) {
             const container = document.getElementById('accountList');
             const safeAccounts = Array.isArray(accounts) ? accounts : [];
@@ -1269,34 +1255,80 @@
                 return;
             }
 
+            const checkedAccountIds = new Set(
+                Array.from(container.querySelectorAll('.account-select-checkbox:checked'))
+                    .map(checkbox => String(checkbox.value))
+            );
             const activeId = mailSearchState.activeAccountId === null ? null : Number(mailSearchState.activeAccountId);
             container.innerHTML = safeAccounts.map(account => {
                 const accountId = Number(account.id);
                 const isActive = activeId !== null && activeId === accountId;
-                const latest = account.latest_match_at ? formatAbsoluteDateTime(account.latest_match_at) : '';
+                const accountType = account.account_type || 'outlook';
                 return `
-                    <div class="account-item mail-search-account-hit ${isActive ? 'active' : ''}"
+                    <div class="account-item mail-search-account-hit ${isActive ? 'active' : ''} ${account.status === 'inactive' ? 'inactive' : ''}"
+                         data-account-id="${accountId}"
                          data-mail-search-account-id="${accountId}"
-                         onclick="toggleMailSearchAccountFilter(${accountId})">
-                        <span class="mail-search-hit-icon" aria-hidden="true">M</span>
+                         onclick="handleMailSearchAccountItemClick(event, ${accountId})">
+                        <input type="checkbox" class="account-select-checkbox" value="${accountId}"
+                               data-account-email="${escapeHtml(account.email || '')}"
+                               data-account-type="${escapeHtml(accountType)}"
+                               data-refreshable="${accountType !== 'imap' ? 'true' : 'false'}"
+                               data-forward-enabled="${account.forward_enabled ? 'true' : 'false'}"
+                               onclick="handleAccountSelectionCheckboxClick(event)">
                         <div class="account-body">
                             <div class="account-title-row">
                                 <div class="account-email-wrap">
-                                    <div class="account-email" title="${escapeHtml(account.email || '')}">
+                                    <div class="account-email" title="${escapeHtml(account.email || '')}" style="${account.last_refresh_status === 'failed' ? 'color: #b42318;' : ''}">
                                         ${escapeHtml(account.email || '未知账号')}
                                     </div>
                                 </div>
                             </div>
-                            ${renderMailSearchGroupSummary(account)}
-                            <div class="mail-search-hit-summary">
+                            <div class="account-meta-row">
+                                <span class="account-status-pill provider"
+                                    style="--pill-accent: ${accountType === 'imap' ? '#0ea5e9' : '#2563eb'}">
+                                    ${escapeHtml(getProviderLabel(account.provider || (accountType === 'imap' ? 'custom' : 'outlook')))}
+                                </span>
+                                ${showForwardStatusLabel(!!account.forward_enabled)}
+                                ${account.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
+                                ${account.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
                                 <span class="mail-search-count-pill">${Number(account.match_count) || 0} 封命中</span>
-                                ${latest ? `<span class="mail-search-latest" title="${escapeHtml(account.latest_match_at || '')}">最近 ${escapeHtml(latest)}</span>` : ''}
+                            </div>
+                            ${renderAccountGroupSummary(account, true)}
+                            ${renderAccountAliasSummary(account.aliases)}
+                            ${account.remark && account.remark.trim() ? `<div class="account-remark" title="${escapeHtml(account.remark)}">${escapeHtml(account.remark)}</div>` : ''}
+                            ${(account.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(account.tags)}</div>` : ''}
+                            ${renderAccountFooter(account)}
+                        </div>
+                        <div class="account-menu-wrap">
+                            <button class="account-menu-trigger" type="button" data-account-menu-toggle="true" title="更多操作">⋯</button>
+                            <div class="account-menu-panel">
+                                <button class="account-action-btn" type="button" data-account-action="copy" data-account-email="${escapeHtml(account.email || '')}">复制邮箱</button>
+                                <button class="account-action-btn" type="button" data-account-action="forwardingLogs" data-account-id="${accountId}" data-account-email="${escapeHtml(account.email || '')}">转发日志</button>
+                                <button class="account-action-btn" type="button" data-account-action="toggleStatus" data-account-id="${accountId}" data-account-status="${escapeHtml(account.status || 'active')}">${account.status === 'inactive' ? '启用账号' : '停用账号'}</button>
+                                <button class="account-action-btn" type="button" data-account-action="edit" data-account-id="${accountId}">编辑账号</button>
+                                <button class="account-action-btn delete" type="button" data-account-action="delete" data-account-id="${accountId}" data-account-email="${escapeHtml(account.email || '')}">删除账号</button>
                             </div>
                         </div>
                     </div>
                 `;
             }).join('');
+            if (checkedAccountIds.size) {
+                container.querySelectorAll('.account-select-checkbox').forEach(checkbox => {
+                    checkbox.checked = checkedAccountIds.has(String(checkbox.value));
+                });
+            }
             updateBatchActionBar();
+        }
+
+        function handleMailSearchAccountItemClick(event, accountId) {
+            if (isAccountRowInteractiveTarget(event?.target)) {
+                return;
+            }
+            if (accountSelectionMode || event?.shiftKey) {
+                handleAccountRowSelectionClick(event);
+                return;
+            }
+            toggleMailSearchAccountFilter(accountId);
         }
 
         function resetMailSearchEmailDetail() {

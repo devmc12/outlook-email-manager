@@ -275,6 +275,15 @@ class NormalMailRetentionTests(unittest.TestCase):
         }
         self.assertEqual(account_counts['retained@example.com'], 3)
         self.assertEqual(account_counts['search-other@example.com'], 1)
+        retained_account = next(
+            item for item in payload['accounts']
+            if item['email'] == 'retained@example.com'
+        )
+        self.assertIn('forward_enabled', retained_account)
+        self.assertIn('aliases', retained_account)
+        self.assertIn('tags', retained_account)
+        self.assertIn('remark', retained_account)
+        self.assertIn('created_at', retained_account)
 
     def test_mail_content_search_decodes_plus_as_space(self):
         with self.app.app_context():
