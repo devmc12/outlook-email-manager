@@ -126,7 +126,7 @@
 | value | TEXT | 设置值 |
 | updated_at | TIMESTAMP | 更新时间，默认当前时间 |
 
-常见 key：`login_password`、`gptmail_api_key`、`duckmail_base_url`、`duckmail_api_key`、`cloudflare_worker_domain`、`cloudflare_email_domains`、`cloudflare_admin_password`、`refresh_interval_days`、`refresh_delay_seconds`、`refresh_cron`、`use_cron_schedule`、`enable_scheduled_refresh`、`app_timezone`、`normal_mail_local_retention_enabled`、`forward_include_account_group`、转发 SMTP/Telegram/企业微信配置、WebDAV 备份配置等。
+常见 key：`login_password`、`gptmail_api_key`、`duckmail_base_url`、`duckmail_api_key`、`cloudflare_worker_domain`、`cloudflare_email_domains`、`cloudflare_admin_password`、`refresh_interval_days`、`refresh_delay_seconds`、`refresh_cron`、`use_cron_schedule`、`enable_scheduled_refresh`、`app_timezone`、`normal_mail_local_retention_enabled`、`normal_mail_local_retention_auto_show_new_mail`、`forward_include_account_group`、转发 SMTP/Telegram/企业微信配置、WebDAV 备份配置等。
 
 ### groups
 

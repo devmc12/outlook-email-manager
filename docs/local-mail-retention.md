@@ -14,6 +14,8 @@ Included mailbox paths:
 
 Normal mail local retention is controlled by `normal_mail_local_retention_enabled` and is disabled by default. The app keeps normal mailbox reads remote-first until the user explicitly enables this setting from the settings page.
 
+The related `normal_mail_local_retention_auto_show_new_mail` switch is also disabled by default. When enabled, background sync can merge newly discovered messages into the visible list automatically instead of waiting for the user to click the new-message notice.
+
 When enabled, retention stores normal mailbox list metadata and only the message bodies that were viewed or explicitly backfilled for local fallback. The retained rows live in local SQLite. The switch applies to normal Outlook/Hotmail and standard IMAP mailbox list/detail flows; it is not a generic attachment archive or raw message archive.
 
 The backend keeps this switch in a small process-local cache for hot mail-list paths. Settings updates through the normal `/api/settings` flow refresh the cache immediately; direct database edits outside the app should be treated as unsupported operational changes until the process is restarted or the setting is saved again through the app.
@@ -36,7 +38,9 @@ Remote sync must not block initial list rendering. A failed sync should leave th
 
 When background sync finds messages that were not already retained locally, the client should show a non-destructive new-message notice. The notice tells the user that newer remote messages are available without abruptly replacing the list while they are reading.
 
-Background sync must stage newly discovered rows without immediately merging them into the current visible list. After the user accepts the notice, the client merges the staged rows into the current list, highlights the newly visible messages, updates the list cache, and triggers best-effort body retention for the newly accepted rows.
+By default, background sync stages newly discovered rows without immediately merging them into the current visible list. After the user accepts the notice, the client merges the staged rows into the current list, highlights the newly visible messages, updates the list cache, and triggers best-effort body retention for the newly accepted rows.
+
+If `normal_mail_local_retention_auto_show_new_mail=true`, the client applies that staged sync immediately: newly discovered rows are merged into the current list, highlighted, cached, and queued for best-effort body retention without showing the click-to-display notice.
 
 ## Detail body retention
 

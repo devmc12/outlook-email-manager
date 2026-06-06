@@ -442,6 +442,10 @@ def api_get_settings():
         'normal_mail_local_retention_enabled',
         'false',
     )
+    settings['normal_mail_local_retention_auto_show_new_mail'] = get_setting(
+        'normal_mail_local_retention_auto_show_new_mail',
+        'false',
+    )
     settings['forward_channels'] = get_forward_channels()
     settings['forward_check_interval_minutes'] = get_setting('forward_check_interval_minutes', '5')
     settings['forward_account_delay_seconds'] = get_setting('forward_account_delay_seconds', '0')
@@ -673,6 +677,20 @@ def api_update_settings():
                 errors.append('更新普通邮箱本地保留开关失败')
         else:
             errors.append('普通邮箱本地保留开关必须是 true 或 false')
+
+    if 'normal_mail_local_retention_auto_show_new_mail' in data:
+        auto_show_new_mail = str(data['normal_mail_local_retention_auto_show_new_mail']).strip().lower()
+        if auto_show_new_mail in ('true', 'false'):
+            normalized_auto_show_new_mail = normalize_bool_setting_value(auto_show_new_mail)
+            if set_setting(
+                'normal_mail_local_retention_auto_show_new_mail',
+                normalized_auto_show_new_mail,
+            ):
+                updated.append('普通邮箱本地保留自动展示新邮件')
+            else:
+                errors.append('更新普通邮箱本地保留自动展示新邮件失败')
+        else:
+            errors.append('普通邮箱本地保留自动展示新邮件必须是 true 或 false')
 
     # 更新对外 API Key
     if 'external_api_key' in data:

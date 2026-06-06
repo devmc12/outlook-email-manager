@@ -1,4 +1,4 @@
-        /* global accountsCache, allTags, closeAllModals, closeMobilePanels, closeNavbarActionsMenu, currentGroupId, currentGroupName, deleteCurrentAccount, ensureForwardingSettingsUI, escapeHtml, formatAbsoluteDateTime, getSelectedForwardChannels, groups, handleApiError, hideEditAccountModal, hideModal, hideSettingsModal, invalidateNormalMailRetentionCaches, isTempEmailGroup, isTempImportGroup, loadAccountsByGroup, loadGroups, loadTempEmails, normalizeSmtpForwardProvider, refreshVisibleAccountList, setAppTimeZone, setModalVisible, setSelectedForwardChannels, setShowAccountCreatedAt, setShowAccountSortOrder, setShowGroupId, setNormalMailLocalRetentionEnabled, setVerificationCodeCopyEnabled, showConfirmModal, showModal, showToast, syncSmtpProviderUI, toggleRefreshStrategy, updateEditAccountFields, updateImportHint */
+        /* global accountsCache, allTags, closeAllModals, closeMobilePanels, closeNavbarActionsMenu, currentGroupId, currentGroupName, deleteCurrentAccount, ensureForwardingSettingsUI, escapeHtml, formatAbsoluteDateTime, getSelectedForwardChannels, groups, handleApiError, hideEditAccountModal, hideModal, hideSettingsModal, invalidateNormalMailRetentionCaches, isTempEmailGroup, isTempImportGroup, loadAccountsByGroup, loadGroups, loadTempEmails, normalizeSmtpForwardProvider, refreshVisibleAccountList, setAppTimeZone, setModalVisible, setSelectedForwardChannels, setShowAccountCreatedAt, setShowAccountSortOrder, setShowGroupId, setNormalMailLocalRetentionEnabled, setNormalMailLocalRetentionAutoShowNewMail, setVerificationCodeCopyEnabled, showConfirmModal, showModal, showToast, syncSmtpProviderUI, toggleRefreshStrategy, updateEditAccountFields, updateImportHint */
 
         // ==================== 设置相关 ====================
         let settingsScrollSyncBound = false;
@@ -1142,8 +1142,11 @@
                     document.getElementById('settingsVerificationCodeCopyEnabled').checked = verificationCodeCopyEnabled;
                     setVerificationCodeCopyEnabled(verificationCodeCopyEnabled);
                     const retentionEnabled = parseSettingsBoolean(data.settings.normal_mail_local_retention_enabled);
+                    const retentionAutoShowNewMail = parseSettingsBoolean(data.settings.normal_mail_local_retention_auto_show_new_mail);
                     document.getElementById('normalMailLocalRetentionEnabled').checked = retentionEnabled;
+                    document.getElementById('normalMailLocalRetentionAutoShowNewMail').checked = retentionAutoShowNewMail;
                     setNormalMailLocalRetentionEnabled(retentionEnabled);
+                    setNormalMailLocalRetentionAutoShowNewMail(retentionAutoShowNewMail);
                     document.getElementById('forwardCheckIntervalMinutes').value = data.settings.forward_check_interval_minutes || '5';
                     document.getElementById('forwardAccountDelaySeconds').value = data.settings.forward_account_delay_seconds || '0';
                     document.getElementById('forwardEmailWindowMinutes').value = data.settings.forward_email_window_minutes || '0';
@@ -1199,6 +1202,7 @@
             const showGroupId = !!document.getElementById('settingsShowGroupId')?.checked;
             const verificationCodeCopyEnabled = !!document.getElementById('settingsVerificationCodeCopyEnabled')?.checked;
             const normalMailLocalRetentionEnabled = !!document.getElementById('normalMailLocalRetentionEnabled')?.checked;
+            const normalMailLocalRetentionAutoShowNewMail = !!document.getElementById('normalMailLocalRetentionAutoShowNewMail')?.checked;
             const settings = {};
             const forwardChannels = getSelectedForwardChannels();
 
@@ -1325,6 +1329,7 @@
             settings.show_group_id = showGroupId;
             settings.verification_code_copy_enabled = verificationCodeCopyEnabled;
             settings.normal_mail_local_retention_enabled = normalMailLocalRetentionEnabled;
+            settings.normal_mail_local_retention_auto_show_new_mail = normalMailLocalRetentionAutoShowNewMail;
             settings.forward_channels = forwardChannels;
             settings.forward_check_interval_minutes = forwardMinutes;
             settings.forward_account_delay_seconds = forwardAccountDelaySeconds;
@@ -1399,6 +1404,7 @@
             setShowGroupId(showGroupId);
             setVerificationCodeCopyEnabled(verificationCodeCopyEnabled);
             setNormalMailLocalRetentionEnabled(normalMailLocalRetentionEnabled);
+            setNormalMailLocalRetentionAutoShowNewMail(normalMailLocalRetentionAutoShowNewMail);
             if (wasRetentionEnabled && !normalMailLocalRetentionEnabled
                 && typeof invalidateNormalMailRetentionCaches === 'function') {
                 invalidateNormalMailRetentionCaches({ resetCurrentView: true });

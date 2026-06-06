@@ -1269,6 +1269,39 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertTrue(refreshed_payload['success'])
         self.assertEqual(refreshed_payload['settings']['verification_code_copy_enabled'], 'false')
 
+    def test_normal_mail_retention_auto_show_new_mail_roundtrips_default_disabled(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute("DELETE FROM settings WHERE key = 'normal_mail_local_retention_auto_show_new_mail'")
+            db.commit()
+            web_outlook_app.init_db()
+
+        response = self.client.get('/api/settings')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['settings']['normal_mail_local_retention_auto_show_new_mail'], 'false')
+
+        update_response = self.client.put(
+            '/api/settings',
+            json={'normal_mail_local_retention_auto_show_new_mail': True}
+        )
+        self.assertEqual(update_response.status_code, 200)
+        update_payload = update_response.get_json()
+        self.assertTrue(update_payload['success'])
+
+        with self.app.app_context():
+            self.assertEqual(
+                web_outlook_app.get_setting('normal_mail_local_retention_auto_show_new_mail'),
+                'true'
+            )
+
+        refreshed_response = self.client.get('/api/settings')
+        self.assertEqual(refreshed_response.status_code, 200)
+        refreshed_payload = refreshed_response.get_json()
+        self.assertTrue(refreshed_payload['success'])
+        self.assertEqual(refreshed_payload['settings']['normal_mail_local_retention_auto_show_new_mail'], 'true')
+
     def test_webdav_backup_settings_require_login_password_when_changed(self):
         with self.app.app_context():
             web_outlook_app.set_setting('login_password', web_outlook_app.hash_password('current-password'))
@@ -2226,6 +2259,12 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
 
         self.assertIn('pendingNewMailSyncs.set(syncKey', queue_block)
         self.assertIn('announceNewlySyncedEmailRows(data, newlySyncedRows, options.folder, syncKey);', queue_block)
+        self.assertIn('isNormalMailLocalRetentionAutoShowNewMailEnabled()', queue_block)
+        self.assertIn('applyPendingNewMailSync(syncKey);', queue_block)
+        self.assertLess(
+            queue_block.index('isNormalMailLocalRetentionAutoShowNewMailEnabled()'),
+            queue_block.index('announceNewlySyncedEmailRows(data, newlySyncedRows, options.folder, syncKey);')
+        )
         self.assertNotIn('currentEmails =', queue_block)
         self.assertNotIn('renderEmailList(currentEmails);', queue_block)
         self.assertNotIn('mergedEmails:', queue_block)
@@ -2243,6 +2282,30 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn('NEW_EMAIL_HIGHLIGHT_CLEAR_DELAY_MS', emails_js)
         self.assertNotIn('已自动显示', emails_js)
         self.assertNotIn('cacheRemoteEmailSyncResult', emails_js)
+
+    def test_normal_mail_retention_auto_show_new_mail_setting_is_wired_to_frontend(self):
+        core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+        settings_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '07-settings.js').read_text(encoding='utf-8')
+        settings_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'dialogs-management.html').read_text(encoding='utf-8')
+
+        retention_section = settings_html.split('id="settingsNormalMailRetentionSection"', 1)[1].split('</section>', 1)[0]
+
+        self.assertIn('id="normalMailLocalRetentionAutoShowNewMail"', retention_section)
+        self.assertIn('自动展示新邮件', retention_section)
+        self.assertIn('let normalMailLocalRetentionAutoShowNewMail = false;', core_js)
+        self.assertIn('function setNormalMailLocalRetentionAutoShowNewMail(enabled)', core_js)
+        self.assertIn('function isNormalMailLocalRetentionAutoShowNewMailEnabled()', core_js)
+        self.assertIn(
+            "setNormalMailLocalRetentionAutoShowNewMail(String(data?.settings?.normal_mail_local_retention_auto_show_new_mail) === 'true');",
+            core_js
+        )
+        self.assertIn(
+            'const retentionAutoShowNewMail = parseSettingsBoolean(data.settings.normal_mail_local_retention_auto_show_new_mail);',
+            settings_js
+        )
+        self.assertIn("document.getElementById('normalMailLocalRetentionAutoShowNewMail').checked = retentionAutoShowNewMail;", settings_js)
+        self.assertIn('settings.normal_mail_local_retention_auto_show_new_mail = normalMailLocalRetentionAutoShowNewMail;', settings_js)
+        self.assertIn('setNormalMailLocalRetentionAutoShowNewMail(normalMailLocalRetentionAutoShowNewMail);', settings_js)
 
     def test_provider_fallback_uses_id_mode_for_detail_raw_and_attachments(self):
         emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')

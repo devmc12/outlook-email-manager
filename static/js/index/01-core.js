@@ -76,6 +76,7 @@
         let showAccountSortOrder = false;
         let showGroupId = true;
         let normalMailLocalRetentionEnabled = false;
+        let normalMailLocalRetentionAutoShowNewMail = false;
         let verificationCodeCopyEnabled = readStoredVerificationCodeCopyEnabled();
 
         function isUntaggedTagFilterValue(value) {
@@ -287,6 +288,15 @@
 
         function isNormalMailLocalRetentionEnabled() {
             return normalMailLocalRetentionEnabled === true;
+        }
+
+        function setNormalMailLocalRetentionAutoShowNewMail(enabled) {
+            normalMailLocalRetentionAutoShowNewMail = enabled === true;
+            return normalMailLocalRetentionAutoShowNewMail;
+        }
+
+        function isNormalMailLocalRetentionAutoShowNewMailEnabled() {
+            return normalMailLocalRetentionAutoShowNewMail === true;
         }
 
         function parseDateInput(dateInput) {
@@ -1243,6 +1253,7 @@
                 setShowAccountSortOrder(String(data?.settings?.show_account_sort_order) === 'true');
                 setShowGroupId(String(data?.settings?.show_group_id) !== 'false');
                 setNormalMailLocalRetentionEnabled(String(data?.settings?.normal_mail_local_retention_enabled) === 'true');
+                setNormalMailLocalRetentionAutoShowNewMail(String(data?.settings?.normal_mail_local_retention_auto_show_new_mail) === 'true');
                 setVerificationCodeCopyEnabled(String(data?.settings?.verification_code_copy_enabled) !== 'false');
                 return data?.settings || null;
             } catch (error) {
