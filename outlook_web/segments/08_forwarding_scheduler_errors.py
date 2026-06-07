@@ -1588,8 +1588,41 @@ def normalize_mail_content_search_limit(value: Any) -> int:
     return max(1, min(parsed, MAIL_CONTENT_SEARCH_MAX_LIMIT))
 
 
-def build_mail_content_search_cte(query: str, group_id: Optional[int],
-                                  folder: str) -> tuple[str, List[Any]]:
+def normalize_mail_content_search_terms(value: Any) -> List[str]:
+    terms: List[str] = []
+    seen = set()
+    for raw_line in str(value or '').splitlines():
+        term = raw_line.strip()
+        if not term:
+            continue
+        normalized = term.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        terms.append(term)
+    return terms
+
+
+def build_mail_content_match_sql(terms: List[str], table_alias: str = '') -> tuple[str, List[Any]]:
+    prefix = f'{table_alias}.' if table_alias else ''
+    clauses = []
+    params: List[Any] = []
+    for term in terms:
+        like_param = retained_mail_like_param(term)
+        clauses.append(f'''(
+            LOWER(COALESCE({prefix}subject, '')) LIKE ? ESCAPE '\\'
+            OR LOWER(COALESCE({prefix}sender, '')) LIKE ? ESCAPE '\\'
+            OR LOWER(COALESCE({prefix}body_preview, '')) LIKE ? ESCAPE '\\'
+            OR LOWER(retained_mail_strip_html(COALESCE({prefix}body, ''))) LIKE ? ESCAPE '\\'
+        )''')
+        params.extend([like_param, like_param, like_param, like_param])
+    if not clauses:
+        return '0', []
+    return '(' + ' OR '.join(clauses) + ')', params
+
+
+def build_mail_content_search_cte(include_terms: List[str], exclude_terms: Optional[List[str]],
+                                  group_id: Optional[int], folder: str) -> tuple[str, List[Any]]:
     source_filters = ['(m.list_cached = 1 OR m.forward_poll_cached = 1)']
     params: List[Any] = []
 
@@ -1601,8 +1634,23 @@ def build_mail_content_search_cte(query: str, group_id: Optional[int],
         source_filters.append('a.group_id = ?')
         params.append(group_id)
 
-    like_param = retained_mail_like_param(query)
-    params.extend([like_param, like_param, like_param])
+    include_sql = '1'
+    if include_terms:
+        include_sql, include_params = build_mail_content_match_sql(include_terms)
+        params.extend(include_params)
+    exclude_sql = ''
+    if exclude_terms:
+        exclude_match_sql, exclude_params = build_mail_content_match_sql(exclude_terms, 'ex')
+        exclude_sql = f'''
+              AND NOT EXISTS (
+                SELECT 1
+                FROM ranked_retained ex
+                WHERE ex.retained_rank = 1
+                  AND ex.account_id = ranked_retained.account_id
+                  AND {exclude_match_sql}
+              )
+        '''
+        params.extend(exclude_params)
 
     return f'''
         WITH ranked_retained AS (
@@ -1653,11 +1701,8 @@ def build_mail_content_search_cte(query: str, group_id: Optional[int],
             SELECT *
             FROM ranked_retained
             WHERE retained_rank = 1
-              AND (
-                LOWER(COALESCE(subject, '')) LIKE ? ESCAPE '\\'
-                OR LOWER(COALESCE(body_preview, '')) LIKE ? ESCAPE '\\'
-                OR LOWER(retained_mail_strip_html(COALESCE(body, ''))) LIKE ? ESCAPE '\\'
-              )
+              AND {include_sql}
+              {exclude_sql}
         )
     ''', params
 
@@ -1675,10 +1720,13 @@ def retained_mail_search_row_to_list_item(row) -> Dict[str, Any]:
 
 def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
                                          folder: str, account_id: Optional[int],
-                                         limit: int, offset: int) -> Dict[str, Any]:
+                                         limit: int, offset: int,
+                                         exclude_query: str = '') -> Dict[str, Any]:
     db = get_db()
     register_retained_mail_sql_functions(db)
-    cte_sql, base_params = build_mail_content_search_cte(query, group_id, folder)
+    include_terms = normalize_mail_content_search_terms(query)
+    exclude_terms = normalize_mail_content_search_terms(exclude_query)
+    cte_sql, base_params = build_mail_content_search_cte(include_terms, exclude_terms, group_id, folder)
 
     account_rows = db.execute(
         cte_sql + '''
@@ -1789,7 +1837,8 @@ def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
 @app.route('/api/emails/search')
 @login_required
 def api_search_retained_emails():
-    query = str(request.args.get('q', '') or '').strip().lower()
+    query = str(request.args.get('q', '') or '').strip()
+    exclude_query = str(request.args.get('exclude_q', '') or '').strip()
     folder = normalize_folder_name(request.args.get('folder', 'all'))
     valid_folders = {'all', 'inbox', 'junkemail'}
     if folder not in valid_folders:
@@ -1803,7 +1852,7 @@ def api_search_retained_emails():
     group_id = parse_optional_positive_int(request.args.get('group_id'))
     account_id = parse_optional_positive_int(request.args.get('account_id'))
 
-    if not query:
+    if not query and not exclude_query:
         return jsonify({
             'success': True,
             'local_retention': True,
@@ -1842,7 +1891,8 @@ def api_search_retained_emails():
         folder,
         account_id,
         limit,
-        offset
+        offset,
+        exclude_query
     ))
 
 

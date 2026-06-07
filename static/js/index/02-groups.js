@@ -3,7 +3,6 @@
         // ==================== 分组相关 ====================
 
         const ACCOUNT_SEARCH_MAX_TERMS = 200;
-        const SEARCH_MODE_STORAGE_KEY = 'outlook_search_mode';
         const MAIL_SEARCH_EMAIL_LIMIT = 30;
         let currentSearchMode = 'account';
         let mailSearchRequestSeq = 0;
@@ -382,19 +381,11 @@
         }
 
         function readStoredSearchMode() {
-            try {
-                return localStorage.getItem(SEARCH_MODE_STORAGE_KEY) === 'mail' ? 'mail' : 'account';
-            } catch (error) {
-                return 'account';
-            }
+            return 'account';
         }
 
         function storeSearchMode(mode) {
-            try {
-                localStorage.setItem(SEARCH_MODE_STORAGE_KEY, mode === 'mail' ? 'mail' : 'account');
-            } catch (error) {
-                // localStorage may be unavailable in restricted browser contexts.
-            }
+            currentSearchMode = mode === 'mail' ? 'mail' : 'account';
         }
 
         function getSearchMode() {
@@ -407,6 +398,62 @@
 
         function getSearchInputValue() {
             return (document.getElementById('globalSearch')?.value || '').trim();
+        }
+
+        function getMailSearchExcludeValue() {
+            return (document.getElementById('mailSearchExcludeInput')?.value || '').trim();
+        }
+
+        function getMailSearchRuleLines(value) {
+            const seen = new Set();
+            return String(value || '')
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(Boolean)
+                .filter(line => {
+                    const normalized = line.toLowerCase();
+                    if (seen.has(normalized)) {
+                        return false;
+                    }
+                    seen.add(normalized);
+                    return true;
+                });
+        }
+
+        function syncMailSearchExcludePanel(forceExpanded = null) {
+            const panel = document.getElementById('mailSearchExcludePanel');
+            const toggle = document.getElementById('mailSearchExcludeToggle');
+            if (!panel || !toggle) {
+                return;
+            }
+
+            const mailMode = isMailSearchMode();
+            panel.hidden = !mailMode;
+            if (!mailMode) {
+                panel.classList.remove('is-expanded');
+                toggle.setAttribute('aria-expanded', 'false');
+                return;
+            }
+
+            const shouldExpand = forceExpanded === null
+                ? panel.classList.contains('is-expanded') || !!getMailSearchExcludeValue()
+                : !!forceExpanded;
+            panel.classList.toggle('is-expanded', shouldExpand);
+            toggle.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+        }
+
+        function toggleMailSearchExcludePanel() {
+            const panel = document.getElementById('mailSearchExcludePanel');
+            syncMailSearchExcludePanel(!panel?.classList.contains('is-expanded'));
+        }
+
+        function handleMailSearchExcludeInput() {
+            syncMailSearchExcludePanel();
+            searchAccounts(getSearchInputValue());
+        }
+
+        function hasMailSearchCriteria(query = getSearchInputValue()) {
+            return !!String(query || '').trim() || !!getMailSearchExcludeValue();
         }
 
         function resetMailSearchState(options = {}) {
@@ -430,7 +477,7 @@
 
         function getDefaultSearchPlaceholder() {
             if (isMailSearchMode()) {
-                return '标题 / 预览 / 正文';
+                return '包含规则：标题 / 发件人 / 预览 / 正文';
             }
             return isTempEmailGroup ? '搜索临时邮箱地址或标签...' : '邮箱|别名|备注|标签';
         }
@@ -457,6 +504,7 @@
             if (searchInput) {
                 searchInput.placeholder = getDefaultSearchPlaceholder();
             }
+            syncMailSearchExcludePanel();
 
             if (tempFilter) {
                 tempFilter.style.display = !mailMode && isTempEmailGroup ? 'flex' : 'none';
@@ -491,14 +539,18 @@
             resetMailSearchState({ clearResults: nextMode === 'account' });
             syncSearchModeUI();
 
+            if (nextMode === 'account') {
+                resetSelectedAccountView();
+            }
+
             const searchQuery = getSearchInputValue();
-            if (searchQuery) {
+            if (nextMode === 'mail' ? hasMailSearchCriteria(searchQuery) : searchQuery) {
                 searchAccounts(searchQuery, true);
                 return;
             }
 
             if (isMailSearchMode()) {
-                renderMailSearchEmptyState('输入关键词搜索本地保留邮件');
+                renderMailSearchEmptyState('输入包含规则筛选用户');
                 return;
             }
             refreshVisibleAccountList(true);
@@ -556,7 +608,7 @@
                 && document.getElementById('groupPanel')?.classList.contains('show');
 
             if (isMailSearchMode()) {
-                renderMailSearchEmptyState('输入关键词搜索本地保留邮件');
+                renderMailSearchEmptyState('输入包含规则筛选用户');
                 if (shouldAdvanceToAccounts) {
                     openMobilePanel('account');
                 }
@@ -1053,6 +1105,7 @@
             container.innerHTML = accounts.map(acc => `
                 <div class="account-item ${currentAccount === acc.email ? 'active' : ''} ${acc.status === 'inactive' ? 'inactive' : ''}"
                      data-account-id="${acc.id}"
+                     data-account-email="${escapeHtml(acc.email)}"
                      onclick="handleAccountItemClick(event, '${escapeJs(acc.email)}')">
                     <input type="checkbox" class="account-select-checkbox" value="${acc.id}" 
                            data-account-email="${escapeHtml(acc.email)}"
@@ -1250,7 +1303,7 @@
             }
 
             if (safeAccounts.length === 0) {
-                container.innerHTML = renderEmptyStateMarkup('🔎', mailSearchState.query ? '未找到命中邮件' : '输入关键词搜索本地保留邮件');
+                container.innerHTML = renderEmptyStateMarkup('🔎', mailSearchState.query ? '未找到符合条件的账号' : '输入包含规则筛选用户');
                 updateBatchActionBar();
                 return;
             }
@@ -1268,6 +1321,7 @@
                     <div class="account-item mail-search-account-hit ${isActive ? 'active' : ''} ${account.status === 'inactive' ? 'inactive' : ''}"
                          data-account-id="${accountId}"
                          data-mail-search-account-id="${accountId}"
+                         data-account-email="${escapeHtml(account.email || '')}"
                          onclick="handleMailSearchAccountItemClick(event, ${accountId})">
                         <input type="checkbox" class="account-select-checkbox" value="${accountId}"
                                data-account-email="${escapeHtml(account.email || '')}"
@@ -1328,7 +1382,12 @@
                 handleAccountRowSelectionClick(event);
                 return;
             }
-            toggleMailSearchAccountFilter(accountId);
+            const account = mailSearchState.accounts.find(item => Number(item.id) === Number(accountId));
+            if (!account?.email) {
+                return;
+            }
+            mailSearchState.activeAccountId = null;
+            selectAccount(account.email);
         }
 
         function resetMailSearchEmailDetail() {
@@ -1381,38 +1440,32 @@
             currentSkip = currentEmails.length;
             hasMoreEmails = data?.has_more === true;
             const total = Number(data?.total) || 0;
-            const activeAccount = mailSearchState.activeAccountId === null
-                ? null
-                : mailSearchState.accounts.find(account => Number(account.id) === Number(mailSearchState.activeAccountId));
+            const accountCount = Array.isArray(data?.accounts) ? data.accounts.length : 0;
 
             if (typeof updateEmailListHeader === 'function') {
-                updateEmailListHeader('邮件搜索', total || currentEmails.length);
+                updateEmailListHeader('匹配邮件', total || currentEmails.length);
                 const countEl = document.getElementById('emailCount');
                 if (countEl && total > currentEmails.length) {
                     countEl.textContent = `(${currentEmails.length}/${total})`;
                 }
             }
 
-            const headerText = activeAccount
-                ? `${activeAccount.email || '账号'} 命中 (${currentEmails.length}/${total || currentEmails.length})`
-                : `邮件搜索 (${currentEmails.length}/${total || currentEmails.length})`;
+            const headerText = `条件筛用户 (${accountCount})`;
             updateCurrentGroupHeader(null, headerText);
-
             if (!options.append) {
                 resetMailSearchEmailDetail();
             }
-
             renderEmailList(currentEmails);
             updateMobileContext();
         }
 
-        function renderMailSearchEmptyState(message = '输入关键词搜索本地保留邮件') {
+        function renderMailSearchEmptyState(message = '输入包含规则筛选用户') {
             resetMailSearchState({ clearResults: true });
             prepareMailSearchEmailPanel('');
             renderMailSearchAccountList([]);
-            updateCurrentGroupHeader(null, '邮件搜索');
+            updateCurrentGroupHeader(null, '条件筛用户');
             if (typeof updateEmailListHeader === 'function') {
-                updateEmailListHeader('邮件搜索', 0);
+                updateEmailListHeader('条件筛用户', 0);
             }
             const emailList = document.getElementById('emailList');
             if (emailList) {
@@ -1424,14 +1477,15 @@
 
         async function searchMailContents(query = null, forceRefresh = false, append = false) {
             const normalizedQuery = String(query === null ? mailSearchState.query : query || '').trim();
+            const excludeQuery = getMailSearchExcludeValue();
             const container = document.getElementById('accountList');
 
-            if (!normalizedQuery) {
+            if (!normalizedQuery && !excludeQuery) {
                 renderMailSearchEmptyState();
                 return;
             }
 
-            if (getAccountSearchTerms(normalizedQuery).length > ACCOUNT_SEARCH_MAX_TERMS) {
+            if (getMailSearchRuleLines(normalizedQuery).length + getMailSearchRuleLines(excludeQuery).length > ACCOUNT_SEARCH_MAX_TERMS) {
                 const message = '搜索关键词最多支持 200 个';
                 if (container) {
                     container.innerHTML = `<div class="empty-state"><div class="empty-state-text">${escapeHtml(message)}</div></div>`;
@@ -1469,6 +1523,9 @@
                 limit: String(MAIL_SEARCH_EMAIL_LIMIT),
                 offset: String(offset)
             });
+            if (excludeQuery) {
+                params.set('exclude_q', excludeQuery);
+            }
             if (getAccountSearchScope() === 'group' && currentGroupId) {
                 params.set('group_id', String(currentGroupId));
             }
@@ -1540,7 +1597,10 @@
 
         function refreshVisibleAccountList(forceRefresh = false) {
             const searchQuery = (document.getElementById('globalSearch')?.value || '').trim();
-            if (searchQuery) {
+            if (isMailSearchMode() && hasMailSearchCriteria(searchQuery)) {
+                return searchAccounts(searchQuery, forceRefresh);
+            }
+            if (!isMailSearchMode() && searchQuery) {
                 return searchAccounts(searchQuery, forceRefresh);
             }
             if (isMailSearchMode()) {

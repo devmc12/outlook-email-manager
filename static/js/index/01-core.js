@@ -1343,6 +1343,13 @@
                 }, 300);
                 searchInput.addEventListener('input', debouncedSearch);
             }
+            const mailSearchExcludeInput = document.getElementById('mailSearchExcludeInput');
+            if (mailSearchExcludeInput) {
+                const debouncedMailExcludeSearch = debounce(() => {
+                    handleMailSearchExcludeInput();
+                }, 300);
+                mailSearchExcludeInput.addEventListener('input', debouncedMailExcludeSearch);
+            }
 
             syncResponsiveUI();
             handleExtensionLaunchHash();

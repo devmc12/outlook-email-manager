@@ -82,7 +82,8 @@
             grid-template-columns: minmax(0, 1fr) 104px;
             grid-template-areas:
                 "mode scope"
-                "input input";
+                "input input"
+                "exclude exclude";
             gap: 8px;
             align-items: center;
         }
@@ -91,7 +92,8 @@
             grid-template-columns: minmax(0, 1fr);
             grid-template-areas:
                 "mode"
-                "input";
+                "input"
+                "exclude";
         }
 
         .search-mode-toggle {
@@ -147,9 +149,75 @@
         textarea.search-input {
             height: 40px;
             min-height: 40px;
-            max-height: 40px;
+            max-height: 120px;
             resize: none;
             overflow-y: auto;
+        }
+
+        .search-container[data-search-mode="mail"] textarea.search-input {
+            height: 56px;
+            min-height: 56px;
+        }
+
+        .mail-search-exclude {
+            grid-area: exclude;
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .search-container[data-search-mode="mail"] .mail-search-exclude {
+            display: flex;
+        }
+
+        .mail-search-exclude[hidden] {
+            display: none !important;
+        }
+
+        .mail-search-exclude-toggle {
+            align-self: flex-start;
+            min-height: 28px;
+            padding: 0 10px;
+            border: 1px solid #d9dce3;
+            border-radius: 999px;
+            background: #ffffff;
+            color: #475569;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        .mail-search-exclude-toggle[aria-expanded="true"] {
+            border-color: #bfdbfe;
+            background: #eff6ff;
+            color: #1d4ed8;
+        }
+
+        .mail-search-exclude-input {
+            display: none;
+            width: 100%;
+            min-height: 54px;
+            max-height: 120px;
+            padding: 9px 12px;
+            border: 1px solid #d9dce3;
+            border-radius: 10px;
+            background: #ffffff;
+            color: #111827;
+            font-size: 13px;
+            line-height: 18px;
+            resize: vertical;
+            outline: none;
+            box-sizing: border-box;
+        }
+
+        .mail-search-exclude.is-expanded .mail-search-exclude-input {
+            display: block;
+        }
+
+        .mail-search-exclude-input:focus {
+            border-color: #1a1a1a;
+            box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.08);
         }
 
         .search-input::placeholder {
