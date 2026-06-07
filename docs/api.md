@@ -58,6 +58,7 @@
 | POST | `/api/accounts/<account_id>/secrets` | Session + CSRF | JSON | 二次验证后获取账号密码和 IMAP 密码 |
 | POST | `/api/accounts` | Session + CSRF | JSON | 批量导入账号 |
 | PUT | `/api/accounts/<account_id>` | Session + CSRF | JSON | 更新账号 |
+| POST | `/api/accounts/<account_id>/reauthorize` | Session + CSRF | JSON | 重新授权已有 Outlook 账号并自动刷新验证 |
 | DELETE | `/api/accounts/<account_id>` | Session + CSRF | JSON | 按 ID 删除账号 |
 | DELETE | `/api/accounts/email/<email_addr>` | Session + CSRF | JSON | 按邮箱删除账号 |
 | POST | `/api/accounts/batch-delete` | Session + CSRF | JSON | 批量删除账号 |
@@ -120,7 +121,11 @@
 | POST | `/api/temp-emails/batch-delete` | Session + CSRF | JSON | 批量删除临时邮箱 |
 | POST | `/api/temp-emails/tags` | Session + CSRF | JSON | 批量改临时邮箱标签 |
 | GET | `/api/duckmail/domains` | Session | JSON | 获取 DuckMail 域名 |
-| GET | `/api/cloudflare/domains` | Session | JSON | 获取 Cloudflare 域名 |
+| GET | `/api/cloudflare/channels` | Session | JSON | 获取 Cloudflare 渠道列表 |
+| POST | `/api/cloudflare/channels` | Session + CSRF | JSON | 创建 Cloudflare 渠道 |
+| PUT | `/api/cloudflare/channels/<id>` | Session + CSRF | JSON | 更新 Cloudflare 渠道 |
+| DELETE | `/api/cloudflare/channels/<id>` | Session + CSRF | JSON | 删除未被临时邮箱引用的 Cloudflare 渠道 |
+| GET | `/api/cloudflare/domains` | Session | JSON | 获取指定 Cloudflare 渠道域名 |
 | POST | `/api/temp-emails/generate` | Session + CSRF | JSON | 生成临时邮箱 |
 | DELETE | `/api/temp-emails/<email_addr>` | Session + CSRF | JSON | 删除临时邮箱 |
 | GET | `/api/temp-emails/<email_addr>/messages` | Session | JSON | 获取临时邮箱邮件列表 |
@@ -747,6 +752,71 @@ Content-Type: application/json
   ]
 }
 ```
+
+### POST `/api/accounts/<account_id>/reauthorize`
+
+为已有 Outlook OAuth 账号重新授权。该接口只支持 Outlook 账号，不支持 IMAP 账号。
+
+请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `redirected_url` | string | 是 | Microsoft 授权完成后浏览器地址栏中的完整回调 URL |
+
+接口会从 `redirected_url` 解析授权码，向 Microsoft 换取新的 Refresh Token，随后只更新目标账号的 `client_id`、加密后的 `refresh_token`、`refresh_token_updated_at` 和刷新状态字段。邮箱、密码、分组、状态、转发、代理、备注、别名、标签等字段不会被该接口修改。
+
+授权信息保存成功后，接口会清理旧的刷新失败错误，并立即触发一次单账号 Token 刷新验证。响应中的 `success` 表示授权信息已保存；`validation.success` 表示自动刷新验证是否通过。
+
+请求示例：
+
+```json
+{
+  "redirected_url": "http://localhost:8080/?code=..."
+}
+```
+
+刷新验证成功响应示例：
+
+```json
+{
+  "success": true,
+  "message": "重新授权成功，Token 刷新验证通过",
+  "authorization_updated": true,
+  "validation": {
+    "success": true,
+    "status": "success",
+    "message": "Token 刷新成功"
+  }
+}
+```
+
+刷新验证失败响应示例：
+
+```json
+{
+  "success": true,
+  "message": "重新授权已保存，但自动刷新验证失败",
+  "authorization_updated": true,
+  "validation": {
+    "success": false,
+    "status": "failed",
+    "error": {
+      "code": "TOKEN_REFRESH_FAILED",
+      "message": "Token 刷新失败",
+      "type": "RefreshTokenError",
+      "status": 400
+    },
+    "error_message": "Graph 刷新失败: ..."
+  }
+}
+```
+
+常见错误：
+
+- `ACCOUNT_NOT_FOUND`: 账号不存在
+- `ACCOUNT_REAUTH_UNSUPPORTED`: IMAP 账号不支持重新授权
+- `OAUTH_EXCHANGE_FAILED`: 回调 URL 无效或 Microsoft 换取 Token 失败
+- `ACCOUNT_REAUTH_SAVE_FAILED`: 新授权信息保存失败
 
 ### POST `/api/accounts/batch-update-group`
 
@@ -1620,14 +1690,18 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | POST | `/api/temp-emails/import` | JSON: `account_string`、`provider` | 批量导入临时邮箱 |
 | POST | `/api/temp-emails/batch-delete` | JSON: `temp_email_ids` | 批量删除临时邮箱 |
 | GET | `/api/duckmail/domains` | 无 | 获取 DuckMail 可用域名 |
-| GET | `/api/cloudflare/domains` | 无 | 获取 Cloudflare 可用域名 |
-| GET | `/api/cloudflare/messages` | Query: `limit?`、`offset?`、`address?` | 使用 Cloudflare 管理员接口查看当前 Worker 全部邮件，可选按收件地址过滤 |
+| GET | `/api/cloudflare/channels` | 无 | 获取 Cloudflare 渠道列表 |
+| POST | `/api/cloudflare/channels` | JSON: 渠道配置 | 创建 Cloudflare 渠道 |
+| PUT | `/api/cloudflare/channels/<id>` | JSON: 渠道配置 | 更新 Cloudflare 渠道 |
+| DELETE | `/api/cloudflare/channels/<id>` | 无 | 删除未被引用的 Cloudflare 渠道 |
+| GET | `/api/cloudflare/domains` | Query: `channel_id` | 获取指定 Cloudflare 渠道可用域名 |
+| GET | `/api/cloudflare/messages` | Query: `channel_id?`、`limit?`、`offset?`、`address?` | 使用指定或默认 Cloudflare 渠道的管理员接口查看该渠道全部邮件，可选按收件地址过滤 |
 
 `/api/temp-emails/import` 的导入格式：
 
 - `provider=gptmail`: 每行一个邮箱
 - `provider=duckmail`: 每行 `邮箱----密码`
-- `provider=cloudflare`: 每行 `邮箱----JWT`
+- `provider=cloudflare`: 支持旧格式每行 `邮箱----JWT`，会导入默认 Cloudflare 渠道；也支持按 `[cloudflare:<channel_name>]` 分段后在分段内写 `邮箱----JWT`
 
 ### POST `/api/temp-emails/generate`
 
@@ -1639,7 +1713,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | --- | --- | --- |
 | `gptmail` | `prefix?`、`domain?` | 不传则走默认随机生成 |
 | `duckmail` | `domain`、`username`、`password` | 用户名至少 3 位，密码至少 6 位 |
-| `cloudflare` | `domain?`、`username?` | `username` 可留空随机生成 |
+| `cloudflare` | `channel_id`、`domain?`、`username?` | `channel_id` 指定 Cloudflare 渠道；`username` 可留空随机生成 |
 
 #### 请求示例
 
@@ -1665,19 +1739,43 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 
 `GET /messages` 与 `POST /refresh` 都会返回统一结构的 `emails` 列表。`POST /refresh` 还会包含 `new_count`，表示本次新保存的邮件数量。
 
+### Cloudflare 渠道管理
+
+Cloudflare Temp Email 支持多渠道配置。每个渠道包含 `name`、`worker_domain`、`email_domains`、`admin_password`、`enabled`、`is_default`。`email_domains` 可选，留空时渠道仍可保存但不能在生成邮箱时自动选择域名；管理员密码只在保存时提交；列表响应只返回 `admin_password_configured`。
+
+创建渠道：
+
+```http
+POST /api/cloudflare/channels
+```
+
+```json
+{
+  "name": "cfmail-us",
+  "worker_domain": "cfmail-us.example.workers.dev",
+  "email_domains": "mail-us.example.com, alt-us.example.com",
+  "admin_password": "ADMIN_PASSWORD",
+  "enabled": true,
+  "is_default": true
+}
+```
+
+更新已有渠道时 `admin_password` 可留空，表示保留原密码；`email_domains` 也可留空，域名查询接口会返回成功响应和空列表。删除渠道前系统会检查是否仍有 Cloudflare 临时邮箱引用该渠道；被引用的渠道不能删除，可以先停用。
+
 ### GET `/api/cloudflare/messages`
 
-查看当前配置的 Cloudflare Temp Email Worker 全部邮件。该接口需要 Web 登录 session，不使用对外 API Key；它不同于普通邮箱的 `folder=all`，后者只聚合某个普通邮箱账号的收件箱和垃圾邮件。
+查看指定 Cloudflare 渠道 Worker 的全部邮件；未传 `channel_id` 时使用默认 Cloudflare 渠道。该接口需要 Web 登录 session，不使用对外 API Key；它不同于普通邮箱的 `folder=all`，后者只聚合某个普通邮箱账号的收件箱和垃圾邮件。本接口不提供跨 Cloudflare 渠道聚合视图。
 
 #### 查询参数
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
+| `channel_id` | int | 否 | Cloudflare 渠道 ID；不传时使用默认渠道 |
 | `limit` | int | 否 | 返回数量，默认 `50`，最大 `100` |
 | `offset` | int | 否 | 分页偏移，默认 `0` |
-| `address` | string | 否 | 收件地址过滤；不传时查看 Worker 全部邮件 |
+| `address` | string | 否 | 收件地址过滤；不传时查看该渠道 Worker 全部邮件 |
 
-当 `address` 是 `@gmail.com` 或 `@googlemail.com`，且第一次地址过滤查询成功但返回 0 封邮件时，会自动用另一个后缀重试。响应中的 `requested_email`、`queried_email`、`fallback_used` 会说明实际查询地址。
+当 `address` 是 `@gmail.com` 或 `@googlemail.com`，且第一次地址过滤查询成功但返回 0 封邮件时，会在同一渠道内自动用另一个后缀重试。响应中的 `channel_id`、`channel_name`、`requested_email`、`queried_email`、`fallback_used` 会说明实际查询范围和地址。
 
 #### 成功响应示例
 
@@ -1685,6 +1783,8 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 {
   "success": true,
   "method": "Cloudflare Admin",
+  "channel_id": 1,
+  "channel_name": "cfmail-us",
   "requested_email": "user@gmail.com",
   "queried_email": "user@googlemail.com",
   "fallback_used": true,
@@ -1715,6 +1815,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | --- | --- | --- | --- |
 | GET | `/api/oauth/auth-url` | 无 | 生成 Microsoft OAuth 授权链接 |
 | POST | `/api/oauth/exchange-token` | JSON: `redirected_url` | 从回调 URL 中解析 `code` 并换取 Refresh Token |
+| POST | `/api/accounts/<account_id>/reauthorize` | JSON: `redirected_url` | 为已有 Outlook 账号重新授权并自动刷新验证 |
 
 换取 Token 请求示例：
 
@@ -1723,6 +1824,8 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
   "redirected_url": "http://localhost:8080/?code=..."
 }
 ```
+
+注意：Microsoft 授权码通常只能使用一次。为已有账号重新授权时，应直接调用 `/api/accounts/<account_id>/reauthorize`，不要先调用 `/api/oauth/exchange-token` 预览后再重复提交同一个回调 URL。
 
 ## 设置接口
 
@@ -1753,9 +1856,9 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | `external_api_key` | 当前对外 API Key |
 | `duckmail_base_url` | DuckMail API 地址 |
 | `duckmail_api_key` | DuckMail API Key |
-| `cloudflare_worker_domain` | Cloudflare Worker 域名 |
-| `cloudflare_email_domains` | Cloudflare 邮箱域名列表，逗号分隔字符串 |
-| `cloudflare_admin_password` | Cloudflare 管理密码 |
+| `cloudflare_worker_domain` | 旧单渠道 Cloudflare Worker 域名，主要用于升级迁移 |
+| `cloudflare_email_domains` | 旧单渠道 Cloudflare 邮箱域名列表，主要用于升级迁移 |
+| `cloudflare_admin_password` | 旧单渠道 Cloudflare 管理密码，主要用于升级迁移 |
 | `app_timezone` | 当前系统时区，IANA 时区名，例如 `Asia/Shanghai` |
 | `show_account_created_at` | 是否在邮箱列表展示创建时间 |
 | `show_account_sort_order` | 是否在邮箱列表展示自定义排序值 |
@@ -1805,9 +1908,9 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | --- | --- | --- |
 | `duckmail_base_url` | string | DuckMail API 地址 |
 | `duckmail_api_key` | string | DuckMail API Key |
-| `cloudflare_worker_domain` | string | Cloudflare Worker 域名 |
-| `cloudflare_email_domains` | string | Cloudflare 邮箱域名，逗号分隔 |
-| `cloudflare_admin_password` | string | Cloudflare 管理密码 |
+| `cloudflare_worker_domain` | string | 旧单渠道 Cloudflare Worker 域名；新配置请使用 `/api/cloudflare/channels` |
+| `cloudflare_email_domains` | string | 旧单渠道 Cloudflare 邮箱域名；新配置请使用 `/api/cloudflare/channels` |
+| `cloudflare_admin_password` | string | 旧单渠道 Cloudflare 管理密码；新配置请使用 `/api/cloudflare/channels` |
 
 #### 转发与 SMTP / Telegram 相关字段
 

@@ -1,5 +1,15 @@
 # Project Fork New
 
+## upstream/main e75181e - merge upstream 2.0.65
+
+本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.0.64`、`2.0.65` 和后续清理提交，并处理与 fork 更新日志的冲突。
+
+- 同步 Cloudflare Temp Email 多渠道管理能力：支持多套 Worker、管理员密码、邮箱域名和独立邮件池，并迁移旧单渠道配置为默认渠道。
+- 同步 Outlook OAuth 账号重新授权能力：编辑账号与刷新失败提示可重新授权已有账号，并通过 `POST /api/accounts/<account_id>/reauthorize` 更新授权字段。
+- 同步上游 API 文档、OpenSpec 变更归档、前端弹窗和相关测试用例。
+- 处理 `CHANGELOG.md` 冲突：保留上游 `2.0.64`、`2.0.65` 正式版本记录，同时保留 fork 的 `2.0.63+1` 至 `2.0.63+5` 增量记录。
+- 保留 fork 的仓库与镜像地址配置，继续指向 `devmc12/outlook-email-manager`。
+
 ## 0a10d81 - feat: add conditional retained mail search
 
 本次提交扩展了普通邮箱本地保留的邮件内容搜索能力，支持按账号级包含/排除条件筛用户，并优化搜索结果邮件与账号列表联动。

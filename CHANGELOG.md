@@ -6,6 +6,33 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.0.65] - 2026-06-07
+
+### Added
+- Outlook OAuth 账号新增重新授权入口，支持从编辑账号弹窗和刷新失败提示中更新已有账号授权并自动触发单账号刷新验证。
+- 新增 `POST /api/accounts/<account_id>/reauthorize` 接口，只更新已有账号授权字段并保留邮箱、密码、分组、代理、标签等业务信息。
+
+### Fixed
+- 重新授权保存新授权信息后先提交数据库事务，再执行自动刷新验证，避免外部刷新请求期间持有 SQLite 写锁。
+
+## [2.0.64] - 2026-06-07
+
+### Added
+- Cloudflare Temp Email 新增多渠道管理，支持为多套 Worker、管理员密码和独立邮件池分别配置渠道。
+- 设置页新增 Cloudflare 渠道列表与创建、编辑、启用/停用、删除能力，并展示渠道引用数量。
+- Cloudflare 临时邮箱创建、读信、删除和全部邮件视图支持按渠道执行；全部邮件入口按渠道独立展示。
+- Cloudflare 临时邮箱导入导出支持 `[cloudflare:<channel_name>]` 分段格式，旧格式继续落到默认渠道。
+
+### Changed
+- 旧单渠道 Cloudflare 配置会在启动时迁移为默认渠道，已有 Cloudflare 临时邮箱会自动绑定默认渠道。
+- Cloudflare 渠道邮箱域名改为可选；未配置域名时渠道仍可保存，域名查询返回空列表。
+- `/api/cloudflare/messages` 未传 `channel_id` 时改为使用默认 Cloudflare 渠道。
+- Cloudflare 渠道名按大小写不敏感规则保持唯一，旧大小写冲突数据会在迁移时自动重命名后出现的重复项。
+
+### Fixed
+- 修复 Cloudflare 渠道表单“新建渠道”按钮实际只清空表单导致误操作的问题。
+- 修复 Cloudflare 全部邮件入口重复展示渠道名的问题。
+
 ## [2.0.63+5] - 2026-06-07
 
 ### Added
@@ -47,6 +74,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 - 默认版本检查仓库切换为 `devmc12/outlook-email-manager`，包括 Release API、远端 `VERSION` 和远端 `CHANGELOG.md`。
 - Web 界面的 GitHub、完整 API 文档和 Docker 在线更新说明链接改为指向 fork 仓库。
 - README、部署、升级、排障和发版文档中的克隆地址与 GHCR 镜像示例改为 `devmc12/outlook-email-manager`。
+
 
 ## [2.0.63] - 2026-06-04
 
