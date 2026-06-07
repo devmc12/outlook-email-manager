@@ -781,6 +781,12 @@
                 width: 100%;
             }
 
+            .email-view-account-btn {
+                max-width: 128px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
             .email-sender-block {
                 flex: 1 1 100%;
             }

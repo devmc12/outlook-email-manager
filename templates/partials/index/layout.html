@@ -165,6 +165,15 @@
                     <textarea id="globalSearch" class="search-input" rows="1"
                         placeholder="邮箱|别名|备注|标签"
                         autocomplete="off" spellcheck="false"></textarea>
+                    <div class="mail-search-exclude" id="mailSearchExcludePanel" hidden>
+                        <button class="mail-search-exclude-toggle" id="mailSearchExcludeToggle" type="button"
+                            aria-expanded="false" onclick="toggleMailSearchExcludePanel()">
+                            排除条件
+                        </button>
+                        <textarea id="mailSearchExcludeInput" class="mail-search-exclude-input" rows="2"
+                            placeholder="排除规则：标题 / 发件人 / 预览 / 正文"
+                            autocomplete="off" spellcheck="false"></textarea>
+                    </div>
                     <div class="search-scope-wrap" id="accountSearchScopeWrap">
                         <select id="accountSearchScopeSelect" class="search-scope-select" aria-label="筛选范围"
                             onchange="handleAccountSearchScopeChange(this.value)">

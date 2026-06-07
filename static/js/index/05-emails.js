@@ -1077,6 +1077,20 @@
                 const verificationCodeButton = verificationCode
                     ? `<button class="email-verification-code-btn" type="button" data-verification-code="${escapeHtml(verificationCode)}" title="复制验证码 ${escapeHtml(verificationCode)}">${escapeHtml(verificationCode)}</button>`
                     : '';
+                const viewAccountButton = isMailSearchList && email.account_email
+                    ? `<button class="email-view-account-btn" type="button" data-account-email="${escapeHtml(email.account_email)}" title="查看该用户邮件">查看用户邮件</button>`
+                    : '';
+                const recipientLine = recipientDisplayLabel || viewAccountButton
+                    ? `
+                                    <div class="email-recipient-row">
+                                        ${recipientDisplayLabel ? `
+                                        <div class="email-recipient ${viewAccountButton ? 'email-recipient--with-action' : ''}" title="${escapeHtml(recipientDisplayLabel)}">
+                                            <span class="email-recipient-text">${escapeHtml(recipientDisplayLabel)}</span>
+                                            ${viewAccountButton}
+                                        </div>
+                                        ` : viewAccountButton}
+                                    </div>`
+                    : '';
                 return `
                 <div class="email-item ${isMailSearchList ? 'email-item--readonly' : ''} ${email.is_read === false ? 'unread' : ''} ${isActive ? 'active' : ''} ${isNewlySynced ? 'newly-synced' : ''}"
                      data-email-id="${escapeHtml(String(email.id || ''))}"
@@ -1092,13 +1106,13 @@
                                 ${email.is_read === false ? '<span class="email-unread-dot" title="未读" aria-label="未读"></span>' : ''}
                                 <div class="email-sender-block">
                                     <div class="email-from" title="${escapeHtml(email.from || '未知发件人')}">${escapeHtml(email.from || '未知发件人')}</div>
-                                    ${recipientDisplayLabel ? `<div class="email-recipient" title="${escapeHtml(recipientDisplayLabel)}">${escapeHtml(recipientDisplayLabel)}</div>` : ''}
                                 </div>
                                 ${hasAttachments ? '<span class="email-attachment-indicator" title="含附件" aria-label="含附件">📎</span>' : ''}
                                 ${sourceLabel ? `<span class="email-folder-badge email-folder-badge--${escapeHtml(String(email.folder || '').toLowerCase())}">${escapeHtml(sourceLabel)}</span>` : ''}
                             </div>
                             <div class="email-date">${formatDate(email.date)}</div>
                         </div>
+                        ${recipientLine}
                         <div class="email-subject-row">
                             <div class="email-subject">${escapeHtml(email.subject || '无主题')}</div>
                             ${verificationCodeButton}
@@ -1127,6 +1141,17 @@
             if (checkboxWrapper) {
                 event.stopPropagation();
                 toggleEmailSelection(checkboxWrapper.dataset.emailId);
+                return;
+            }
+
+            const viewAccountButton = event.target.closest('.email-view-account-btn[data-account-email]');
+            if (viewAccountButton) {
+                event.preventDefault();
+                event.stopPropagation();
+                const accountEmail = viewAccountButton.dataset.accountEmail || '';
+                if (accountEmail && typeof selectAccount === 'function') {
+                    selectAccount(accountEmail);
+                }
                 return;
             }
 

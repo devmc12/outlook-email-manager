@@ -2,6 +2,29 @@
 
         // ==================== 账号相关 ====================
 
+        function getAccountItemEmail(item) {
+            return String(item?.dataset?.accountEmail || item?.querySelector?.('.account-email')?.textContent || '').trim().toLowerCase();
+        }
+
+        function syncActiveAccountListItem(email, options = {}) {
+            const normalizedEmail = String(email || '').trim().toLowerCase();
+            let activeItem = null;
+
+            document.querySelectorAll('.account-item').forEach(item => {
+                const isMatch = normalizedEmail && getAccountItemEmail(item) === normalizedEmail;
+                item.classList.toggle('active', isMatch);
+                if (isMatch) {
+                    activeItem = item;
+                }
+            });
+
+            if (activeItem && options.scroll !== false) {
+                activeItem.scrollIntoView({ block: 'center', inline: 'nearest', behavior: options.behavior || 'smooth' });
+            }
+
+            return activeItem;
+        }
+
         // 选择账号
         function selectAccount(email) {
             currentAccount = email;
@@ -16,13 +39,8 @@
             closeMobilePanels();
             updateMobileContext();
 
-            document.querySelectorAll('.account-item').forEach(item => {
-                item.classList.remove('active');
-                const emailEl = item.querySelector('.account-email');
-                if (emailEl && emailEl.textContent.includes(email)) {
-                    item.classList.add('active');
-                }
-            });
+            syncActiveAccountListItem(email);
+            requestAnimationFrame(() => syncActiveAccountListItem(email));
 
             // 显示文件夹切换按钮
             const folderTabs = document.getElementById('folderTabs');

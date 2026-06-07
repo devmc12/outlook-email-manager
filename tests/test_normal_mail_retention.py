@@ -345,6 +345,148 @@ class NormalMailRetentionTests(unittest.TestCase):
         self.assertEqual(account_payload['emails'][0]['id'], 'mail-search-body-1')
         self.assertGreaterEqual(len(account_payload['accounts']), 2)
 
+    def test_mail_content_search_matches_and_excludes_sender(self):
+        self._seed_mail_search_rows()
+
+        sender_response = self.client.get('/api/emails/search?q=sender-c@example.com')
+
+        self.assertEqual(sender_response.status_code, 200)
+        sender_payload = sender_response.get_json()
+        self.assertTrue(sender_payload['success'])
+        self.assertEqual(sender_payload['total'], 1)
+        self.assertEqual(sender_payload['emails'][0]['id'], 'mail-search-forward-hidden-1')
+        self.assertEqual(sender_payload['accounts'][0]['email'], 'retained@example.com')
+
+        exclude_sender_response = self.client.get(
+            '/api/emails/search',
+            query_string={
+                'q': 'Alpha',
+                'exclude_q': 'sender-c@example.com',
+            }
+        )
+
+        self.assertEqual(exclude_sender_response.status_code, 200)
+        exclude_payload = exclude_sender_response.get_json()
+        self.assertTrue(exclude_payload['success'])
+        account_emails = [item['email'] for item in exclude_payload['accounts']]
+        self.assertIn('search-other@example.com', account_emails)
+        self.assertNotIn('retained@example.com', account_emails)
+        self.assertEqual([item['id'] for item in exclude_payload['emails']], ['mail-search-body-1'])
+
+    def test_mail_content_search_allows_exclude_only_query(self):
+        self._seed_mail_search_rows()
+
+        response = self.client.get(
+            '/api/emails/search',
+            query_string={
+                'exclude_q': 'sender-c@example.com',
+                'folder': 'all',
+                'limit': '20',
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        account_emails = [item['email'] for item in payload['accounts']]
+        self.assertEqual(account_emails, ['search-other@example.com'])
+        self.assertEqual(
+            [item['id'] for item in payload['emails']],
+            ['mail-search-body-1', 'mail-search-other-1']
+        )
+        self.assertEqual(payload['total'], 2)
+
+    def test_mail_content_search_supports_multiline_include_and_account_level_exclude(self):
+        group_id, other_account = self._seed_mail_search_rows()
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.add_account(
+                'excluded-user@example.com',
+                'password',
+                'client-id-3',
+                'refresh-token-3',
+                group_id=group_id,
+                account_type='outlook',
+                provider='outlook',
+            ))
+            excluded_account = web_outlook_app.get_account_by_email('excluded-user@example.com')
+            db = web_outlook_app.get_db()
+            db.executemany(
+                '''
+                INSERT INTO retained_normal_mail_messages (
+                    account_id, folder, provider_message_id, id_mode,
+                    subject, sender, recipients, received_at, received_at_sort,
+                    body_preview, body, body_type, list_cached, body_cached
+                )
+                VALUES (?, ?, ?, 'graph', ?, 'sender@example.com', 'reader@example.com',
+                        ?, ?, ?, ?, 'html', 1, ?)
+                ''',
+                [
+                    (
+                        excluded_account['id'], 'inbox', 'mail-search-excluded-include',
+                        'OpenAI - Access Deactive notice', '2026-05-27T12:00:00Z',
+                        120.0, 'include marker', '', 0,
+                    ),
+                    (
+                        excluded_account['id'], 'inbox', 'mail-search-excluded-exclude',
+                        'Routine account update', '2026-05-27T11:30:00Z',
+                        115.0, 'User Renew notice', '', 0,
+                    ),
+                    (
+                        other_account['id'], 'inbox', 'mail-search-keep-access',
+                        'OpenAI - Access Deactive notice', '2026-05-27T12:30:00Z',
+                        130.0, 'kept account', '', 0,
+                    ),
+                    (
+                        other_account['id'], 'junkemail', 'mail-search-junk-renew',
+                        'User Renew junk only', '2026-05-27T12:40:00Z',
+                        140.0, 'excluded only when folder=all or junkemail', '', 0,
+                    ),
+                    (
+                        other_account['id'], 'inbox', 'mail-search-keep-body',
+                        'Routine body phrase', '2026-05-27T12:50:00Z',
+                        150.0, 'preview', '<p>Special Include Phrase</p>', 1,
+                    ),
+                ]
+            )
+            db.commit()
+
+        response = self.client.get(
+            '/api/emails/search',
+            query_string={
+                'q': 'Access Deactive\nSpecial Include Phrase',
+                'exclude_q': 'User Renew\nOther Exclusion',
+                'folder': 'inbox',
+                'group_id': str(group_id),
+                'limit': '20',
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        account_emails = [item['email'] for item in payload['accounts']]
+        self.assertIn('search-other@example.com', account_emails)
+        self.assertNotIn('excluded-user@example.com', account_emails)
+        self.assertEqual(
+            sorted(item['id'] for item in payload['emails']),
+            ['mail-search-keep-access', 'mail-search-keep-body']
+        )
+
+        all_folder_response = self.client.get(
+            '/api/emails/search',
+            query_string={
+                'q': 'Access Deactive',
+                'exclude_q': 'User Renew',
+                'folder': 'all',
+                'group_id': str(group_id),
+            }
+        )
+        all_folder_payload = all_folder_response.get_json()
+        self.assertNotIn(
+            'search-other@example.com',
+            [item['email'] for item in all_folder_payload['accounts']]
+        )
+
     def test_mail_content_search_disabled_retention_returns_empty_payload(self):
         self._seed_mail_search_rows()
         with self.app.app_context():
