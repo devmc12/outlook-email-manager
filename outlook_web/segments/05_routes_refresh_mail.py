@@ -2908,6 +2908,7 @@ def format_graph_email_detail(detail: Dict[str, Any], attachments: List[Dict[str
         'body': detail.get('body', {}).get('content', ''),
         'body_type': detail.get('body', {}).get('contentType', 'text'),
         'attachments': attachments,
+        'has_attachments': bool(attachments or detail.get('hasAttachments')),
     }
 
 def build_retained_detail_success_response(account: Dict[str, Any], folder: str,
@@ -3032,6 +3033,15 @@ def parse_retained_mail_attachments(raw_attachments: Any) -> List[Dict[str, Any]
     if not isinstance(attachments, list):
         return []
     return [item for item in attachments if isinstance(item, dict)]
+
+
+def retained_detail_has_incomplete_attachment_metadata(retained_detail: Dict[str, Any]) -> bool:
+    email = (retained_detail or {}).get('email') or {}
+    attachments = email.get('attachments')
+    return (
+        bool(email.get('has_attachments'))
+        and not (isinstance(attachments, list) and len(attachments) > 0)
+    )
 
 
 def retained_mail_row_to_detail_response(row) -> Dict[str, Any]:
@@ -3902,7 +3912,7 @@ def api_get_email_detail(email_addr, message_id):
 
     if is_prefer_local_detail_request() and is_normal_mail_local_retention_enabled():
         retained_detail = fetch_retained_normal_mail_detail(account, folder, message_id, id_mode)
-        if retained_detail:
+        if retained_detail and not retained_detail_has_incomplete_attachment_metadata(retained_detail):
             return jsonify(retained_detail)
 
     if account.get('account_type') == 'imap':

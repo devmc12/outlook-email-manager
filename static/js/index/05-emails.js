@@ -815,10 +815,8 @@
             });
             if (isNormalMailboxListRequest() && isNormalMailLocalRetentionEnabled()) {
                 query.set('prefer_local', '1');
-                if (selectedEmail.id_mode) {
-                    query.set('id_mode', selectedEmail.id_mode);
-                }
             }
+            appendEmailIdModeParam(query, selectedEmail);
             return `/api/email/${encodeURIComponent(getEmailActionAccount(selectedEmail))}/${encodeURIComponent(messageId)}?${query.toString()}`;
         }
 

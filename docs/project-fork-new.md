@@ -1,5 +1,15 @@
 # Project Fork New
 
+## upstream/main a969cb7 - merge upstream 2.0.69
+
+本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.0.68`、`2.0.69`，并处理邮件详情 URL 构造的冲突。
+
+- 同步普通邮箱本地保留详情的附件元数据回源逻辑：当缓存标记有附件但附件元数据为空时，会回退远程详情补齐附件并回填本地缓存。
+- 同步 Microsoft Graph 附件元数据查询修复，避免选择不支持的 `contentId` 字段导致附件列表获取失败。
+- 同步 Graph 邮件详情在附件元数据为空时仍保留 `has_attachments` 标记的修复，便于本地保留识别需要回源补齐的邮件。
+- 同步普通邮箱详情请求稳定携带 `id_mode` 的修复，避免 Graph、UID 和 sequence 消息 ID 语义混用导致详情或附件读取失败。
+- 处理 `static/js/index/05-emails.js` 冲突：保留 fork 邮件搜索结果跨账号打开详情的 `getEmailActionAccount(selectedEmail)` 逻辑，同时吸收上游 `appendEmailIdModeParam()` 参数传递。
+
 ## upstream/main e75181e - merge upstream 2.0.65
 
 本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.0.64`、`2.0.65` 和后续清理提交，并处理与 fork 更新日志的冲突。

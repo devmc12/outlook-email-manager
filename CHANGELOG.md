@@ -6,6 +6,18 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.0.69] - 2026-06-15
+
+### Fixed
+- 修复 Microsoft Graph 附件元数据查询因选择不支持的 `contentId` 字段导致附件列表获取失败的问题。
+- 修复 Graph 邮件详情在附件元数据为空时丢失 `has_attachments` 标记的问题，确保本地保留缓存能识别附件元数据不完整并回源补齐。
+- 修复普通邮箱详情请求未稳定携带 `id_mode` 的问题，避免 Graph、UID 和 sequence 消息 ID 语义混用导致详情或附件读取失败。
+
+## [2.0.68] - 2026-06-14
+
+### Fixed
+- 修复普通邮箱本地保留详情在缓存标记有附件但附件元数据为空时直接返回本地缓存，导致邮件详情不展示附件的问题；现在会回退远程详情补齐附件元数据并回填本地缓存。
+
 ## [2.0.67] - 2026-06-08
 
 ### Added
