@@ -127,6 +127,9 @@
 | DELETE | `/api/cloudflare/channels/<id>` | Session + CSRF | JSON | 删除未被临时邮箱引用的 Cloudflare 渠道 |
 | GET | `/api/cloudflare/domains` | Session | JSON | 获取指定 Cloudflare 渠道域名 |
 | POST | `/api/temp-emails/generate` | Session + CSRF | JSON | 生成临时邮箱 |
+| POST | `/api/temp-emails/generate-batch` | Session + CSRF | JSON | 批量生成 Cloudflare 临时邮箱 |
+| POST | `/api/cloudflare/ai-usernames/test` | Session + CSRF | JSON | 使用草稿配置测试 AI 用户名生成 |
+| POST | `/api/cloudflare/ai-usernames/generate` | Session + CSRF | JSON | 使用已保存配置生成 Cloudflare 用户名列表 |
 | DELETE | `/api/temp-emails/<email_addr>` | Session + CSRF | JSON | 删除临时邮箱 |
 | GET | `/api/temp-emails/<email_addr>/messages` | Session | JSON | 获取临时邮箱邮件列表 |
 | GET | `/api/temp-emails/<email_addr>/messages/<message_id>` | Session | JSON | 获取临时邮件详情 |
@@ -343,7 +346,7 @@ AI 客户端应优先判断 `success`，再兼容 `error` 既可能是字符串�
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `group_id` | int | 否 | 仅返回指定分组下的账号 |
+| `group_id` | int | 否 | 仅返回指定分组直属账号；不会递归包含子分组 |
 | `limit` | int | 否 | 单页条数，最大 `10000`；不传时保持兼容，返回全部匹配账号 |
 | `offset` | int | 否 | 分页偏移量，默认 `0` |
 | `sort_by` | string | 否 | 排序字段，支持 `created_at`、`email`、`sort_order` |
@@ -497,12 +500,12 @@ curl -H "X-API-Key: your-api-key" \
 
 | 方法 | 路径 | 参数 | 说明 |
 | --- | --- | --- | --- |
-| GET | `/api/groups` | 无 | 获取所有分组，返回 `account_count`、`sort_position` |
+| GET | `/api/groups` | 无 | 获取所有分组，返回 `parent_id`、`level`、`account_count`、`descendant_account_count`、`sort_position` |
 | GET | `/api/groups/<group_id>` | 路径参数 `group_id` | 获取单个分组详情 |
-| POST | `/api/groups` | JSON: `name`、`description?`、`color?`、`proxy_url?`、`sort_position?` | 创建分组 |
-| PUT | `/api/groups/<group_id>` | JSON: `name`、`description?`、`color?`、`proxy_url?`、`sort_position?` | 更新分组 |
-| DELETE | `/api/groups/<group_id>` | 路径参数 `group_id` | 删除分组，默认分组不能删除 |
-| PUT | `/api/groups/reorder` | JSON: `group_ids: number[]` | 重新排序普通分组 |
+| POST | `/api/groups` | JSON: `name`、`description?`、`color?`、`proxy_url?`、`sort_position?`、`parent_id?` | 创建分组 |
+| PUT | `/api/groups/<group_id>` | JSON: `name`、`description?`、`color?`、`proxy_url?`、`sort_position?`、`parent_id?` | 更新分组或移动父级 |
+| DELETE | `/api/groups/<group_id>` | 路径参数 `group_id` | 删除分组；含子分组时级联删除子分组并把账号移回默认分组 |
+| PUT | `/api/groups/reorder` | JSON: `group_ids: number[]`、`parent_id?` | 重新排序同一父级下的普通分组 |
 
 创建或更新分组请求示例：
 
@@ -512,13 +515,22 @@ curl -H "X-API-Key: your-api-key" \
   "description": "走香港代理",
   "color": "#1a1a1a",
   "proxy_url": "http://127.0.0.1:7890",
-  "sort_position": 2
+  "sort_position": 2,
+  "parent_id": null
 }
 ```
 
+分组支持最多三级树形层级：
+
+- `parent_id=null` 表示一级分组；指定一级分组为父级会创建二级分组，指定二级分组为父级会创建三级分组。
+- 三级分组下不能再创建子分组；临时邮箱分组不能作为父分组，也不能被移动到其他分组下。
+- `sort_position` 只在同一 `parent_id` 下生效，`PUT /api/groups/reorder` 也只重排同一父级的 `group_ids`。
+- `account_count` 是当前分组直属账号数，`descendant_account_count` 是当前分组及所有后代分组账号数。
+- 删除父分组会删除所有后代分组，并把被删除分组中的普通邮箱账号移动到默认分组。
+
 ## 导出与二次验证
 
-导出接口都会先校验一次登录密码，拿到 `verify_token` 后再发起导出。`verify_token` 当前为一次性令牌，默认 5 分钟内有效。
+导出接口都会先校验一次登录密码，拿到 `verify_token` 后再发起导出。`verify_token` 当前为一次性令牌，默认 5 分钟内有效。按分组导出时会包含该分组及所有子分组账号；同时传入父子分组时，账号只会导出一次。
 
 | 方法 | 路径 | 参数 | 返回 |
 | --- | --- | --- | --- |
@@ -554,7 +566,7 @@ curl -H "X-API-Key: your-api-key" \
 
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `group_id` | int | 否 | 仅返回指定分组下的账号 |
+| `group_id` | int | 否 | 返回指定分组及所有子分组下的账号 |
 
 #### 响应重点字段
 
@@ -586,7 +598,7 @@ curl -H "X-API-Key: your-api-key" \
 | `offset` | int | 否 | 分页偏移量，默认 `0` |
 | `sort_by` | string | 否 | 排序字段，支持 `created_at`、`email`、`sort_order` |
 | `sort_order` | string | 否 | 排序方向，`asc` 或 `desc`，默认 `desc` |
-| `group_id` | int | 否 | 仅搜索指定分组下的账号，不传则搜索全部分组 |
+| `group_id` | int | 否 | 仅搜索指定分组及所有子分组下的账号，不传则搜索全部分组 |
 | `tag_ids` | string | 否 | 逗号分隔的标签 ID，仅搜索包含任一标签的账号 |
 | `include_untagged` | bool | 否 | 与 `tag_ids` 配合使用，是否包含未打标签账号 |
 
@@ -1060,7 +1072,7 @@ Content-Type: application/json
 | `project_key` | string | 是 | 项目标识，内部会转成小写并去掉首尾空格 |
 | `name` | string | 否 | 项目名称。首次创建时不传则默认使用 `project_key` |
 | `description` | string | 否 | 项目描述 |
-| `group_ids` | array<int> | 否 | 项目范围分组列表；不传时首次创建默认为全量邮箱范围 |
+| `group_ids` | array<int> | 否 | 项目范围分组列表；会包含每个分组及其所有子分组账号；不传时首次创建默认为全量邮箱范围 |
 | `use_alias_email` | bool | 否 | 是否优先把别名邮箱加入项目；默认 `false` |
 
 #### 请求示例
@@ -1140,7 +1152,7 @@ Content-Type: application/json
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `status` | string | 否 | 按项目状态过滤，如 `toClaim`、`failed`、`done` |
-| `group_id` | int | 否 | 按当前分组或项目来源分组过滤 |
+| `group_id` | int | 否 | 按当前分组或项目来源分组过滤；会包含该分组及所有子分组 |
 | `provider` | string | 否 | 按邮箱 provider 过滤 |
 | `keyword` | string | 否 | 在邮箱地址、备注里做模糊搜索 |
 
@@ -1688,7 +1700,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | 方法 | 路径 | 参数 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/api/temp-emails` | 无 | 获取所有临时邮箱，列表项包含 `tags` 字段 |
-| POST | `/api/temp-emails/import` | JSON: `account_string`、`provider` | 批量导入临时邮箱 |
+| POST | `/api/temp-emails/import` | JSON: `account_string`、`provider`、`tag_ids?` | 批量导入临时邮箱；Cloudflare 导入成功的邮箱可同步绑定标签 |
 | POST | `/api/temp-emails/batch-delete` | JSON: `temp_email_ids` | 批量删除临时邮箱 |
 | GET | `/api/duckmail/domains` | 无 | 获取 DuckMail 可用域名 |
 | GET | `/api/cloudflare/channels` | 无 | 获取 Cloudflare 渠道列表 |
@@ -1697,12 +1709,15 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | DELETE | `/api/cloudflare/channels/<id>` | 无 | 删除未被引用的 Cloudflare 渠道 |
 | GET | `/api/cloudflare/domains` | Query: `channel_id` | 获取指定 Cloudflare 渠道可用域名 |
 | GET | `/api/cloudflare/messages` | Query: `channel_id?`、`limit?`、`offset?`、`address?` | 使用指定或默认 Cloudflare 渠道的管理员接口查看该渠道全部邮件，可选按收件地址过滤 |
+| POST | `/api/temp-emails/generate-batch` | JSON: `provider=cloudflare`、`count`、`channel_id?`、`domain?`、`usernames?`、`tag_ids?` | 批量生成 Cloudflare 临时邮箱 |
+| POST | `/api/cloudflare/ai-usernames/test` | JSON: AI 草稿配置、`count` | 使用未保存或已保存的配置测试 AI 用户名生成 |
+| POST | `/api/cloudflare/ai-usernames/generate` | JSON: `count` | 使用已保存且启用的 AI 配置生成严格等量用户名 |
 
 `/api/temp-emails/import` 的导入格式：
 
 - `provider=gptmail`: 每行一个邮箱
 - `provider=duckmail`: 每行 `邮箱----密码`
-- `provider=cloudflare`: 支持旧格式每行 `邮箱----JWT`，会导入默认 Cloudflare 渠道；也支持按 `[cloudflare:<channel_name>]` 分段后在分段内写 `邮箱----JWT`
+- `provider=cloudflare`: 支持旧格式每行 `邮箱----JWT`，会导入默认 Cloudflare 渠道；也支持按 `[cloudflare:<channel_name>]` 分段后在分段内写 `邮箱----JWT`，或每行写 `邮箱----JWT----渠道名`
 
 ### POST `/api/temp-emails/generate`
 
@@ -1726,6 +1741,87 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
   "password": "secret123"
 }
 ```
+
+### POST `/api/temp-emails/generate-batch`
+
+批量生成 Cloudflare 临时邮箱。当前仅支持 `provider=cloudflare`。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `provider` | string | 是 | 固定为 `cloudflare` |
+| `count` | int | 是 | 创建数量，范围 `1-50` |
+| `channel_id` | int/string | 否 | Cloudflare 渠道 ID；不传时使用默认渠道 |
+| `domain` | string | 否 | 指定邮箱域名；不传时使用渠道第一个域名 |
+| `usernames` | array<string> | 否 | 显式用户名列表。空或不传时随机生成；非空时清洗后数量必须等于 `count`，且不能重复 |
+| `tag_ids` | array<int> | 否 | 为成功创建的临时邮箱绑定存在的标签 |
+
+用户名清洗规则：转小写；含 `@` 时取 `@` 前缀；删除所有非 `a-z0-9` 字符；清洗后长度必须至少 3；最多保留 32 个字符。
+
+#### 请求示例
+
+```json
+{
+  "provider": "cloudflare",
+  "channel_id": 1,
+  "domain": "mail.example.com",
+  "count": 3,
+  "usernames": ["alpha", "beta@example.com", "sales.ops"],
+  "tag_ids": [2, 5]
+}
+```
+
+#### 成功或部分成功响应示例
+
+```json
+{
+  "success": true,
+  "emails": [
+    "alpha@mail.example.com",
+    "beta@mail.example.com"
+  ],
+  "created_count": 2,
+  "failed_count": 1,
+  "failures": [
+    {
+      "index": 3,
+      "username": "salesops",
+      "error": "upstream rejected"
+    }
+  ],
+  "tagged_count": 2,
+  "message": "已创建 2 个 Cloudflare 临时邮箱"
+}
+```
+
+如果全部创建失败，`success=false`，并返回第一个失败原因到 `error`。
+
+### POST `/api/cloudflare/ai-usernames/test`
+
+使用草稿配置测试 AI 用户名生成，不创建邮箱、不保存生成结果。可用于设置页保存前测试。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `api_url` | string | 是 | OpenAI-compatible API 地址；可传基础 `/v1` 地址，后端会补 `/chat/completions` |
+| `model` | string | 是 | 模型名称 |
+| `api_key` | string | 否 | AI API Key；省略时尝试使用已保存密钥 |
+| `prompt` | string | 否 | 提示词模板，支持 `{count}` 和 `{seed}` |
+| `count` | int | 否 | 期望数量，范围 `1-50`，默认 `5` |
+
+### POST `/api/cloudflare/ai-usernames/generate`
+
+使用已保存且已启用的 Cloudflare AI 用户名配置生成用户名列表。该接口只返回用户名，不创建邮箱、不绑定标签。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `count` | int | 是 | 期望数量，范围 `1-50` |
+
+该接口要求 AI 原始返回数量和清洗后的数量都严格等于 `count`。数量不足、过多、重复或清洗后无效都会返回 `success=false`，不会随机补齐或截断。
 
 ### 临时邮箱邮件接口
 
@@ -1860,6 +1956,12 @@ POST /api/cloudflare/channels
 | `cloudflare_worker_domain` | 旧单渠道 Cloudflare Worker 域名，主要用于升级迁移 |
 | `cloudflare_email_domains` | 旧单渠道 Cloudflare 邮箱域名列表，主要用于升级迁移 |
 | `cloudflare_admin_password` | 旧单渠道 Cloudflare 管理密码，主要用于升级迁移 |
+| `cloudflare_ai_username_enabled` | 是否启用 Cloudflare AI 用户名生成 |
+| `cloudflare_ai_username_api_url` | Cloudflare AI 用户名生成 API 地址 |
+| `cloudflare_ai_username_model` | Cloudflare AI 用户名生成模型 |
+| `cloudflare_ai_username_prompt` | Cloudflare AI 用户名生成提示词模板 |
+| `cloudflare_ai_username_api_key_configured` | 是否已保存 Cloudflare AI API Key |
+| `cloudflare_ai_username_api_key_masked` | Cloudflare AI API Key 掩码，不返回明文 |
 | `app_timezone` | 当前系统时区，IANA 时区名，例如 `Asia/Shanghai` |
 | `show_account_created_at` | 是否在邮箱列表展示创建时间 |
 | `show_account_sort_order` | 是否在邮箱列表展示自定义排序值 |
@@ -1912,6 +2014,12 @@ POST /api/cloudflare/channels
 | `cloudflare_worker_domain` | string | 旧单渠道 Cloudflare Worker 域名；新配置请使用 `/api/cloudflare/channels` |
 | `cloudflare_email_domains` | string | 旧单渠道 Cloudflare 邮箱域名；新配置请使用 `/api/cloudflare/channels` |
 | `cloudflare_admin_password` | string | 旧单渠道 Cloudflare 管理密码；新配置请使用 `/api/cloudflare/channels` |
+| `cloudflare_ai_username_enabled` | bool/string | 是否启用 Cloudflare AI 用户名生成 |
+| `cloudflare_ai_username_api_url` | string | OpenAI-compatible API 地址 |
+| `cloudflare_ai_username_model` | string | 模型名称 |
+| `cloudflare_ai_username_prompt` | string | 提示词模板，支持 `{count}` 和 `{seed}` |
+| `cloudflare_ai_username_api_key` | string | AI API Key；非空时加密保存，空字符串会保留已有值 |
+| `cloudflare_ai_username_clear_api_key` | bool | 传 `true` 时清空已保存的 AI API Key |
 
 #### 转发与 SMTP / Telegram 相关字段
 
@@ -2034,7 +2142,7 @@ Telegram 测试：
 
 ### 代理使用
 
-账号邮箱相关 API 当前会优先使用账号级代理配置；账号 `proxy_url`、`fallback_proxy_url_1`、`fallback_proxy_url_2` 三项全空时，才继承账号所属分组的代理配置：
+账号邮箱相关 API 当前会优先使用账号级代理配置；账号 `proxy_url`、`fallback_proxy_url_1`、`fallback_proxy_url_2` 三项全空时，才继承账号所属分组的代理配置。若当前分组未配置代理，会继续向上查找父级分组代理，直到找到有代理配置的祖先分组或到达一级分组：
 
 - Graph token 获取
 - Graph 邮件列表

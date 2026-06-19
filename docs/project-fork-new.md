@@ -1,5 +1,15 @@
 # Project Fork New
 
+## upstream/main a19736a - merge upstream 2.0.72
+
+本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.0.70`、`2.0.71`、`2.0.72`，并处理分组管理前端脚本的冲突。
+
+- 同步最多三级的树形分组能力：支持父分组选择、折叠展开、同级排序、跨层级拖拽移动，以及账号列表、账号搜索、分组导出和项目分组范围自动包含子分组账号。
+- 同步 Cloudflare 临时邮箱工作流增强：批量生成、AI 用户名生成配置、显式用户名列表输入、成功后自动绑定标签，以及导入示例与渠道写法更新。
+- 同步临时邮箱生成弹窗和设置页布局调整：Cloudflare、GPTMail、DuckMail 改为分段切换布局，并新增 DuckMail 密码显示/隐藏按钮。
+- 同步相关后端、API 文档、浏览器扩展、OpenSpec 变更与测试用例，包括树形分组和 Cloudflare 临时邮箱新流程的覆盖。
+- 处理 `static/js/index/02-groups.js` 冲突：保留 fork 的邮件搜索模式、排除条件和命中账号联动逻辑，同时吸收上游树形分组、分组折叠和 `persistGroupMove()` 相关实现。
+
 ## upstream/main a969cb7 - merge upstream 2.0.69
 
 本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.0.68`、`2.0.69`，并处理邮件详情 URL 构造的冲突。

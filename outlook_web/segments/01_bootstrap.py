@@ -658,6 +658,11 @@ DUCKMAIL_API_KEY = os.getenv("DUCKMAIL_API_KEY", "")  # 可选，dk_ 前缀，�
 CLOUDFLARE_WORKER_DOMAIN = os.getenv("CLOUDFLARE_WORKER_DOMAIN") or os.getenv("WORKER_DOMAIN", "")
 CLOUDFLARE_EMAIL_DOMAINS = os.getenv("CLOUDFLARE_EMAIL_DOMAINS") or os.getenv("EMAIL_DOMAIN", "")
 CLOUDFLARE_ADMIN_PASSWORD = os.getenv("CLOUDFLARE_ADMIN_PASSWORD") or os.getenv("ADMIN_PASSWORD", "")
+CLOUDFLARE_AI_USERNAME_DEFAULT_PROMPT = os.getenv(
+    "CLOUDFLARE_AI_USERNAME_PROMPT",
+    "Generate {count} realistic, corporate-style American email username prefixes.\n"
+    "Return only a JSON array of lowercase usernames. Seed: {seed}",
+)
 
 # 临时邮箱分组 ID（系统保留）
 TEMP_EMAIL_GROUP_ID = -1
@@ -1128,30 +1133,56 @@ def normalize_group_sort_orders_on_startup(cursor) -> None:
     """启动时归一化分组顺序，但保留已有自定义顺序。"""
     cursor.execute(
         '''
-        SELECT id, name, sort_order
+        SELECT DISTINCT parent_id
         FROM groups
-        ORDER BY
-            CASE WHEN name = '临时邮箱' THEN 0 ELSE 1 END,
-            CASE
-                WHEN name = '临时邮箱' THEN 0
-                WHEN COALESCE(sort_order, 0) > 0 THEN sort_order
-                ELSE 2147483647
-            END,
-            id
         '''
     )
-    group_rows = cursor.fetchall()
+    parent_ids = [row[0] for row in cursor.fetchall()]
 
-    next_sort_order = 1
-    for group_id, group_name, sort_order in group_rows:
-        target_sort_order = 0 if group_name == '临时邮箱' else next_sort_order
-        if group_name != '临时邮箱':
-            next_sort_order += 1
-        if sort_order != target_sort_order:
-            cursor.execute(
-                'UPDATE groups SET sort_order = ? WHERE id = ?',
-                (target_sort_order, group_id)
-            )
+    for parent_id in parent_ids:
+        if parent_id is None:
+            parent_filter = 'parent_id IS NULL'
+            params = ()
+        else:
+            parent_filter = 'parent_id = ?'
+            params = (parent_id,)
+
+        cursor.execute(
+            f'''
+            SELECT id, name, sort_order
+            FROM groups
+            WHERE {parent_filter}
+            ORDER BY
+                CASE WHEN name = '临时邮箱' THEN 0 ELSE 1 END,
+                CASE
+                    WHEN name = '临时邮箱' THEN 0
+                    WHEN COALESCE(sort_order, 0) > 0 THEN sort_order
+                    ELSE 2147483647
+                END,
+                id
+            ''',
+            params
+        )
+        group_rows = cursor.fetchall()
+
+        next_sort_order = 1
+        for group_id, group_name, sort_order in group_rows:
+            target_sort_order = 0 if group_name == '临时邮箱' else next_sort_order
+            if group_name != '临时邮箱':
+                next_sort_order += 1
+            if sort_order != target_sort_order:
+                cursor.execute(
+                    'UPDATE groups SET sort_order = ? WHERE id = ?',
+                    (target_sort_order, group_id)
+                )
+
+    cursor.execute(
+        '''
+        UPDATE groups
+        SET parent_id = NULL, level = 1
+        WHERE name = '临时邮箱' OR is_system = 1
+        '''
+    )
 
 
 def init_db():
@@ -1178,7 +1209,10 @@ def init_db():
             color TEXT DEFAULT '#1a1a1a',
             sort_order INTEGER DEFAULT 0,
             is_system INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            parent_id INTEGER DEFAULT NULL,
+            level INTEGER DEFAULT 1 CHECK(level IN (1,2,3)),
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(parent_id) REFERENCES groups(id)
         )
     ''')
     
@@ -1633,6 +1667,16 @@ def init_db():
         cursor.execute('ALTER TABLE groups ADD COLUMN fallback_proxy_url_1 TEXT')
     if 'fallback_proxy_url_2' not in group_columns:
         cursor.execute('ALTER TABLE groups ADD COLUMN fallback_proxy_url_2 TEXT')
+    if 'parent_id' not in group_columns:
+        cursor.execute('ALTER TABLE groups ADD COLUMN parent_id INTEGER DEFAULT NULL')
+    if 'level' not in group_columns:
+        cursor.execute('ALTER TABLE groups ADD COLUMN level INTEGER DEFAULT 1')
+    cursor.execute('''
+        UPDATE groups
+        SET parent_id = NULL,
+            level = COALESCE(NULLIF(level, 0), 1)
+        WHERE parent_id IS NULL
+    ''')
 
     # 检查 temp_emails 表是否有 DuckMail 相关列
     cursor.execute("PRAGMA table_info(temp_emails)")
@@ -1746,6 +1790,7 @@ def init_db():
         INSERT OR IGNORE INTO groups (name, description, color, is_system)
         VALUES ('临时邮箱', 'GPTMail 临时邮箱服务', '#00bcf2', 1)
     ''')
+    cursor.execute("UPDATE groups SET parent_id = NULL, level = 1 WHERE name IN ('默认分组', '临时邮箱')")
 
     # 归一化分组排序值，临时邮箱固定在最前，其他分组保留已有相对顺序。
     normalize_group_sort_orders_on_startup(cursor)
@@ -1800,6 +1845,26 @@ def init_db():
         INSERT OR IGNORE INTO settings (key, value)
         VALUES ('cloudflare_admin_password', ?)
     ''', (CLOUDFLARE_ADMIN_PASSWORD,))
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('cloudflare_ai_username_enabled', 'false')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('cloudflare_ai_username_api_url', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('cloudflare_ai_username_model', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('cloudflare_ai_username_api_key', '')
+    ''')
+    cursor.execute('''
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('cloudflare_ai_username_prompt', ?)
+    ''', (CLOUDFLARE_AI_USERNAME_DEFAULT_PROMPT,))
 
     cursor.execute('SELECT COUNT(*) FROM cloudflare_channels')
     cloudflare_channel_count = cursor.fetchone()[0]
@@ -2059,6 +2124,11 @@ def init_db():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_accounts_group_email_nocase
         ON accounts(group_id, email COLLATE NOCASE)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_groups_parent_id
+        ON groups(parent_id)
     ''')
 
     cursor.execute('''
