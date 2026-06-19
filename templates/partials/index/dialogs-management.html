@@ -376,6 +376,20 @@
                                 <button class="btn btn-primary" type="button" id="triggerForwardingCheckBtn" onclick="triggerForwardingCheck()">手动触发转发检查</button>
                             </div>
                         </div>
+                        <div class="settings-subpanel forwarding-match-panel">
+                            <div class="form-group">
+                                <label class="form-label" for="forwardMatchRules">转发匹配规则</label>
+                                <textarea class="form-textarea" id="forwardMatchRules" rows="4" placeholder="OpenAI&#10;security code"></textarea>
+                                <div class="form-hint">一行一条，不区分大小写；默认只匹配标题。留空时不过滤候选邮件。</div>
+                            </div>
+                            <div class="forwarding-match-panel__controls">
+                                <label class="settings-toggle settings-toggle--inline forwarding-inline-toggle">
+                                    <input type="checkbox" id="forwardMatchIncludePreview">
+                                    <span class="form-label">同时匹配预览正文</span>
+                                </label>
+                                <div class="form-hint">开启后会把候选邮件的预览正文也纳入匹配。</div>
+                            </div>
+                        </div>
                         <div class="form-group forwarding-channel-group">
                             <div class="forwarding-channel-group__head">
                                 <label class="form-label">转发渠道</label>

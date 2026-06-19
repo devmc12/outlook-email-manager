@@ -1304,6 +1304,48 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertTrue(refreshed_payload['success'])
         self.assertEqual(refreshed_payload['settings']['normal_mail_local_retention_auto_show_new_mail'], 'true')
 
+    def test_forward_match_settings_roundtrip_default_disabled(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute("DELETE FROM settings WHERE key IN ('forward_match_rules', 'forward_match_include_preview')")
+            db.commit()
+            web_outlook_app.init_db()
+
+        response = self.client.get('/api/settings')
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['settings']['forward_match_rules'], '')
+        self.assertEqual(payload['settings']['forward_match_include_preview'], 'false')
+
+        update_response = self.client.put(
+            '/api/settings',
+            json={
+                'forward_match_rules': 'OpenAI\nSecurity Code\nopenai\n',
+                'forward_match_include_preview': True,
+            }
+        )
+        self.assertEqual(update_response.status_code, 200)
+        update_payload = update_response.get_json()
+        self.assertTrue(update_payload['success'])
+
+        with self.app.app_context():
+            self.assertEqual(
+                web_outlook_app.get_setting('forward_match_rules'),
+                'OpenAI\nSecurity Code'
+            )
+            self.assertEqual(
+                web_outlook_app.get_setting('forward_match_include_preview'),
+                'true'
+            )
+
+        refreshed_response = self.client.get('/api/settings')
+        self.assertEqual(refreshed_response.status_code, 200)
+        refreshed_payload = refreshed_response.get_json()
+        self.assertTrue(refreshed_payload['success'])
+        self.assertEqual(refreshed_payload['settings']['forward_match_rules'], 'OpenAI\nSecurity Code')
+        self.assertEqual(refreshed_payload['settings']['forward_match_include_preview'], 'true')
+
     def test_webdav_backup_settings_require_login_password_when_changed(self):
         with self.app.app_context():
             web_outlook_app.set_setting('login_password', web_outlook_app.hash_password('current-password'))
@@ -2560,6 +2602,26 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn("document.getElementById('normalMailLocalRetentionAutoShowNewMail').checked = retentionAutoShowNewMail;", settings_js)
         self.assertIn('settings.normal_mail_local_retention_auto_show_new_mail = normalMailLocalRetentionAutoShowNewMail;', settings_js)
         self.assertIn('setNormalMailLocalRetentionAutoShowNewMail(normalMailLocalRetentionAutoShowNewMail);', settings_js)
+
+    def test_forward_match_settings_are_wired_to_frontend(self):
+        settings_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '07-settings.js').read_text(encoding='utf-8')
+        settings_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'dialogs-management.html').read_text(encoding='utf-8')
+        modal_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '06-modals-toast.css').read_text(encoding='utf-8')
+
+        forwarding_section = settings_html.split('id="forwardingSettingsSection"', 1)[1].split('</section>', 1)[0]
+
+        self.assertIn('id="forwardMatchRules"', forwarding_section)
+        self.assertIn('转发匹配规则', forwarding_section)
+        self.assertIn('id="forwardMatchIncludePreview"', forwarding_section)
+        self.assertIn('同时匹配预览正文', forwarding_section)
+        self.assertIn("document.getElementById('forwardMatchRules').value = data.settings.forward_match_rules || '';", settings_js)
+        self.assertIn("document.getElementById('forwardMatchIncludePreview').checked = String(data.settings.forward_match_include_preview) === 'true';", settings_js)
+        self.assertIn("const forwardMatchRules = (document.getElementById('forwardMatchRules')?.value || '').replace(/\\r\\n/g, '\\n');", settings_js)
+        self.assertIn("const forwardMatchIncludePreview = !!document.getElementById('forwardMatchIncludePreview')?.checked;", settings_js)
+        self.assertIn('settings.forward_match_rules = forwardMatchRules;', settings_js)
+        self.assertIn('settings.forward_match_include_preview = forwardMatchIncludePreview;', settings_js)
+        self.assertIn('.forwarding-match-panel {', modal_css)
+        self.assertIn('.forwarding-match-panel__controls {', modal_css)
 
     def test_provider_fallback_uses_id_mode_for_detail_raw_and_attachments(self):
         emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')

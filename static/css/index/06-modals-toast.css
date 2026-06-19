@@ -1860,6 +1860,15 @@
             min-height: 22px;
         }
 
+        .forwarding-match-panel {
+            gap: 12px;
+        }
+
+        .forwarding-match-panel__controls {
+            display: grid;
+            gap: 6px;
+        }
+
         .forwarding-channel-group {
             display: grid;
             gap: 10px;

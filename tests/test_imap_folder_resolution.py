@@ -3292,7 +3292,12 @@ class MultiChannelForwardingTests(unittest.TestCase):
             db.commit()
 
             self.assertTrue(web_outlook_app.set_setting('forward_channels', 'smtp,telegram'))
+            self.assertTrue(web_outlook_app.set_setting('forward_account_delay_seconds', '0'))
+            self.assertTrue(web_outlook_app.set_setting('forward_email_window_minutes', '0'))
+            self.assertTrue(web_outlook_app.set_setting('forward_include_junkemail', 'false'))
             self.assertTrue(web_outlook_app.set_setting('forward_include_account_group', 'false'))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_rules', ''))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_include_preview', 'false'))
             self.assertTrue(web_outlook_app.set_setting('normal_mail_local_retention_enabled', 'false'))
             if hasattr(web_outlook_app, 'clear_normal_mail_local_retention_enabled_cache'):
                 web_outlook_app.clear_normal_mail_local_retention_enabled_cache()
@@ -3587,6 +3592,221 @@ class MultiChannelForwardingTests(unittest.TestCase):
 
         self.assertEqual(email_mock.call_count, 0)
         self.assertEqual(tg_mock.call_count, 1)
+
+    def test_process_forwarding_job_keeps_default_behavior_when_match_rules_are_empty(self):
+        email_item = {
+            'id': 'message-empty-rules',
+            'folder': 'inbox',
+            'subject': 'Unfiltered subject',
+            'body_preview': 'No filter should apply',
+            'date': '2026-04-15T08:30:00Z',
+        }
+        email_detail = {
+            'id': 'message-empty-rules',
+            'subject': 'Unfiltered subject',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T08:30:00Z',
+            'body': 'hello default behavior',
+            'body_type': 'text',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('forward_match_rules', ''))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_include_preview', 'false'))
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail) as detail_mock:
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True) as email_mock:
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True) as tg_mock:
+                        web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(detail_mock.call_count, 1)
+        self.assertEqual(email_mock.call_count, 1)
+        self.assertEqual(tg_mock.call_count, 1)
+
+    def test_process_forwarding_job_filters_candidates_by_subject_only(self):
+        matched_item = {
+            'id': 'message-subject-match',
+            'folder': 'inbox',
+            'subject': 'OpenAI access deactivated',
+            'body_preview': 'preview without keyword',
+            'date': '2026-04-15T09:00:00Z',
+        }
+        preview_only_item = {
+            'id': 'message-preview-only',
+            'folder': 'inbox',
+            'subject': 'Routine notice',
+            'body_preview': 'Contains OpenAI in preview only',
+            'date': '2026-04-15T09:05:00Z',
+        }
+        matched_detail = {
+            'id': 'message-subject-match',
+            'subject': 'OpenAI access deactivated',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T09:00:00Z',
+            'body': 'hello subject match',
+            'body_type': 'text',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('forward_match_rules', 'openai'))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_include_preview', 'false'))
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [matched_item, preview_only_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=matched_detail) as detail_mock:
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True) as email_mock:
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True) as tg_mock:
+                        web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(detail_mock.call_count, 1)
+        self.assertEqual(detail_mock.call_args.args[1], 'message-subject-match')
+        self.assertEqual(email_mock.call_count, 1)
+        self.assertEqual(tg_mock.call_count, 1)
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            rows = db.execute(
+                '''
+                SELECT message_id, channel, status
+                FROM forwarding_logs
+                WHERE account_id = ?
+                ORDER BY message_id, channel
+                ''',
+                (self.account_id,),
+            ).fetchall()
+            account_row = db.execute(
+                'SELECT forward_last_checked_at FROM accounts WHERE id = ?',
+                (self.account_id,),
+            ).fetchone()
+
+        self.assertEqual(
+            [(row['message_id'], row['channel'], row['status']) for row in rows],
+            [
+                ('message-subject-match', 'email', 'success'),
+                ('message-subject-match', 'telegram', 'success'),
+            ],
+        )
+        self.assertEqual(
+            web_outlook_app.parse_email_datetime(account_row['forward_last_checked_at']),
+            web_outlook_app.parse_email_datetime(preview_only_item['date']),
+        )
+
+    def test_process_forwarding_job_does_not_advance_cursor_past_failed_matched_mail(self):
+        failed_matched_item = {
+            'id': 'message-detail-fails',
+            'folder': 'inbox',
+            'subject': 'OpenAI access deactivated',
+            'body_preview': 'matched message',
+            'date': '2026-04-15T09:00:00Z',
+        }
+        skipped_newer_item = {
+            'id': 'message-filtered-newer',
+            'folder': 'inbox',
+            'subject': 'Routine notice',
+            'body_preview': 'newer but unmatched',
+            'date': '2026-04-15T09:05:00Z',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('forward_match_rules', 'openai'))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_include_preview', 'false'))
+
+        with patch.object(
+            web_outlook_app,
+            'fetch_forward_candidates',
+            return_value={'success': True, 'emails': [failed_matched_item, skipped_newer_item], 'error': ''}
+        ):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=None) as detail_mock:
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True) as email_mock:
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True) as tg_mock:
+                        web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(detail_mock.call_count, 1)
+        self.assertEqual(detail_mock.call_args.args[1], 'message-detail-fails')
+        self.assertEqual(email_mock.call_count, 0)
+        self.assertEqual(tg_mock.call_count, 0)
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            rows = db.execute(
+                '''
+                SELECT message_id, channel, status
+                FROM forwarding_logs
+                WHERE account_id = ?
+                ORDER BY message_id, channel
+                ''',
+                (self.account_id,),
+            ).fetchall()
+            account_row = db.execute(
+                'SELECT forward_last_checked_at FROM accounts WHERE id = ?',
+                (self.account_id,),
+            ).fetchone()
+
+        self.assertEqual(
+            [(row['message_id'], row['channel'], row['status']) for row in rows],
+            [('message-detail-fails', 'detail', 'failed')],
+        )
+        self.assertIsNone(account_row['forward_last_checked_at'])
+
+    def test_process_forwarding_job_can_match_preview_when_enabled(self):
+        email_item = {
+            'id': 'message-preview-match',
+            'folder': 'inbox',
+            'subject': 'Routine notice',
+            'body_preview': 'Security Code in preview only',
+            'date': '2026-04-15T09:15:00Z',
+        }
+        email_detail = {
+            'id': 'message-preview-match',
+            'subject': 'Routine notice',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T09:15:00Z',
+            'body': 'hello preview match',
+            'body_type': 'text',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('forward_match_rules', 'security code'))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_include_preview', 'true'))
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail) as detail_mock:
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True) as email_mock:
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True) as tg_mock:
+                        web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(detail_mock.call_count, 1)
+        self.assertEqual(email_mock.call_count, 1)
+        self.assertEqual(tg_mock.call_count, 1)
+
+    def test_process_forwarding_job_uses_or_logic_and_case_insensitive_rules(self):
+        email_item = {
+            'id': 'message-or-match',
+            'folder': 'inbox',
+            'subject': 'Routine notice',
+            'body_preview': 'Contains second keyword only',
+            'date': '2026-04-15T09:20:00Z',
+        }
+        email_detail = {
+            'id': 'message-or-match',
+            'subject': 'Routine notice',
+            'from': 'sender@example.com',
+            'date': '2026-04-15T09:20:00Z',
+            'body': 'hello or match',
+            'body_type': 'text',
+        }
+
+        with self.app.app_context():
+            self.assertTrue(web_outlook_app.set_setting('forward_match_rules', 'first keyword\nSECOND KEYWORD'))
+            self.assertTrue(web_outlook_app.set_setting('forward_match_include_preview', 'true'))
+
+        with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value={'success': True, 'emails': [email_item], 'error': ''}):
+            with patch.object(web_outlook_app, 'fetch_forward_detail', return_value=email_detail) as detail_mock:
+                with patch.object(web_outlook_app, 'send_forward_email', return_value=True):
+                    with patch.object(web_outlook_app, 'send_forward_telegram', return_value=True):
+                        web_outlook_app.process_forwarding_job()
+
+        self.assertEqual(detail_mock.call_count, 1)
 
     def test_outlook_keyword_filter_matches_graph_detail_body(self):
         account = {

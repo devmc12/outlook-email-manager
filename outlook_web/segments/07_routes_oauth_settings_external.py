@@ -115,6 +115,30 @@ def update_account_authorization_for_reauth(account_id: int, client_id: str, ref
         return False
 
 
+def normalize_forward_match_rules_setting_value(value: Any) -> str:
+    if isinstance(value, str):
+        candidates = value.splitlines()
+    elif isinstance(value, (list, tuple, set)):
+        candidates = list(value)
+    elif value is None:
+        candidates = []
+    else:
+        candidates = [value]
+
+    normalized_lines = []
+    seen = set()
+    for item in candidates:
+        line = str(item or '').strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized_lines.append(line)
+    return '\n'.join(normalized_lines)
+
+
 @app.route('/api/oauth/auth-url', methods=['GET'])
 @login_required
 def api_get_oauth_auth_url():
@@ -624,6 +648,8 @@ def api_get_settings():
     settings['forward_email_window_minutes'] = get_setting('forward_email_window_minutes', '0')
     settings['forward_include_junkemail'] = get_setting('forward_include_junkemail', 'false')
     settings['forward_include_account_group'] = get_setting('forward_include_account_group', 'false')
+    settings['forward_match_rules'] = get_setting('forward_match_rules', '')
+    settings['forward_match_include_preview'] = get_setting('forward_match_include_preview', 'false')
     settings['email_forward_recipient'] = get_setting('email_forward_recipient', '')
     settings['smtp_host'] = get_setting('smtp_host', '')
     settings['smtp_port'] = get_setting('smtp_port', '465')
@@ -1006,6 +1032,25 @@ def api_update_settings():
                 errors.append('保存转发附加邮箱分组失败')
         else:
             errors.append('转发附加邮箱分组必须是 true 或 false')
+
+    if 'forward_match_rules' in data:
+        normalized_forward_match_rules = normalize_forward_match_rules_setting_value(
+            data.get('forward_match_rules')
+        )
+        if set_setting('forward_match_rules', normalized_forward_match_rules):
+            updated.append('转发匹配规则')
+        else:
+            errors.append('保存转发匹配规则失败')
+
+    if 'forward_match_include_preview' in data:
+        include_preview = str(data['forward_match_include_preview']).lower()
+        if include_preview in ('true', 'false'):
+            if set_setting('forward_match_include_preview', include_preview):
+                updated.append('转发匹配预览正文')
+            else:
+                errors.append('保存转发匹配预览正文失败')
+        else:
+            errors.append('转发匹配预览正文必须是 true 或 false')
 
     if 'forward_channels' in data:
         forward_channels = normalize_forward_channel_settings(data['forward_channels'])

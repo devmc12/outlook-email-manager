@@ -97,6 +97,34 @@ def get_forward_account_delay_seconds() -> int:
         return 0
 
 
+def get_forward_match_rules() -> list[str]:
+    return normalize_forward_match_rules_setting_value(
+        get_setting('forward_match_rules', '')
+    ).splitlines()
+
+
+def should_forward_match_preview() -> bool:
+    return get_bool_setting('forward_match_include_preview', False)
+
+
+def candidate_matches_forward_rules(item: Dict[str, Any], rules: list[str],
+                                    include_preview: bool = False) -> bool:
+    if not rules:
+        return True
+
+    subject = str(item.get('subject') or '').lower()
+    preview = str(item.get('body_preview') or '').lower() if include_preview else ''
+    for rule in rules:
+        needle = str(rule or '').strip().lower()
+        if not needle:
+            continue
+        if needle in subject:
+            return True
+        if include_preview and needle in preview:
+            return True
+    return False
+
+
 def has_forward_log(conn, account_id: int, message_id: str, channel: str) -> bool:
     row = conn.execute(
         'SELECT 1 FROM forward_logs WHERE account_id = ? AND message_id = ? AND channel = ? LIMIT 1',
@@ -446,6 +474,8 @@ def process_forwarding_job():
         conn.row_factory = sqlite3.Row
         try:
             forward_channels = set(get_forward_channels())
+            forward_match_rules = get_forward_match_rules()
+            forward_match_include_preview = should_forward_match_preview()
             email_enabled = FORWARD_CHANNEL_SMTP_SETTING in forward_channels and bool(
                 get_setting('email_forward_recipient', '').strip() and get_setting('smtp_host', '').strip()
             )
@@ -531,7 +561,9 @@ def process_forwarding_job():
                 email_success_count = 0
                 telegram_success_count = 0
                 wecom_success_count = 0
-                latest_success_time = cursor_time
+                filtered_skip_count = 0
+                latest_checked_time = cursor_time
+                cursor_blocked_by_failure = False
                 for item in emails:
                     dt = parse_email_datetime(item.get('date', ''))
                     if forward_window_start and dt and dt < forward_window_start:
@@ -566,9 +598,30 @@ def process_forwarding_job():
                 recent_emails.sort(key=lambda pair: pair[0] or datetime.min)
 
                 for item_time, item in recent_emails:
+                    if not candidate_matches_forward_rules(
+                        item,
+                        forward_match_rules,
+                        forward_match_include_preview,
+                    ):
+                        filtered_skip_count += 1
+                        app.logger.info(
+                            '[forward] skip email by match rules: account=%s message_id=%s subject=%s include_preview=%s',
+                            account.get('email', ''),
+                            item.get('id', ''),
+                            str(item.get('subject') or ''),
+                            forward_match_include_preview,
+                        )
+                        if (
+                            not cursor_blocked_by_failure
+                            and item_time
+                            and (latest_checked_time is None or item_time > latest_checked_time)
+                        ):
+                            latest_checked_time = item_time
+                        continue
                     detail = fetch_forward_detail(account, item.get('id'), item.get('folder', 'inbox'))
                     if not detail:
                         had_processing_failure = True
+                        cursor_blocked_by_failure = True
                         log_forwarding_result(
                             account['id'],
                             account.get('email', ''),
@@ -766,14 +819,20 @@ def process_forwarding_job():
 
                     if message_failed:
                         had_processing_failure = True
+                        cursor_blocked_by_failure = True
                         continue
-                    if message_processed and item_time and (latest_success_time is None or item_time > latest_success_time):
-                        latest_success_time = item_time
+                    if (
+                        not cursor_blocked_by_failure
+                        and message_processed
+                        and item_time
+                        and (latest_checked_time is None or item_time > latest_checked_time)
+                    ):
+                        latest_checked_time = item_time
 
                 cursor_value = account.get('forward_last_checked_at', '')
                 cursor_updated = False
-                if latest_success_time and (cursor_time is None or latest_success_time > cursor_time):
-                    cursor_value = latest_success_time.isoformat()
+                if latest_checked_time and (cursor_time is None or latest_checked_time > cursor_time):
+                    cursor_value = latest_checked_time.isoformat()
                     conn.execute(
                         'UPDATE accounts SET forward_last_checked_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                         (cursor_value, account['id'])
@@ -786,7 +845,7 @@ def process_forwarding_job():
                     )
                 conn.commit()
                 safe_console_print(
-                    f"[forward] account done: account={account.get('email', '')} email_success={email_success_count} telegram_success={telegram_success_count} wecom_success={wecom_success_count} cursor_updated={cursor_updated} cursor={cursor_value} had_failure={had_processing_failure}"
+                    f"[forward] account done: account={account.get('email', '')} email_success={email_success_count} telegram_success={telegram_success_count} wecom_success={wecom_success_count} filtered_skip={filtered_skip_count} cursor_updated={cursor_updated} cursor={cursor_value} had_failure={had_processing_failure}"
                 )
                 if account_delay_seconds > 0 and index < total_accounts - 1:
                     next_account_email = accounts[index + 1]['email'] if accounts[index + 1] else ''
