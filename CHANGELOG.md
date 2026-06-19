@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.0.72+1] - 2026-06-19
+
+### Added
+- 邮件转发设置新增多行匹配规则，支持按标题筛选转发候选邮件，并可选择同时匹配预览正文；空规则保持不过滤的原有行为。
+- 转发轮询匹配规则会在拉取邮件详情前生效，未命中的邮件不会发送转发或写转发日志，同时避免详情/发送失败的命中邮件被后续未命中邮件推进游标跳过。
+
 ## [2.0.72] - 2026-06-19
 
 ### Changed
