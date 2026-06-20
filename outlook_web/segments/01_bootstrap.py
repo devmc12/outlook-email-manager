@@ -1241,6 +1241,11 @@ def init_db():
             last_refresh_at TIMESTAMP,
             last_refresh_status TEXT DEFAULT 'never',
             last_refresh_error TEXT,
+            mail_access_status TEXT DEFAULT 'unknown',
+            mail_access_reason TEXT,
+            mail_access_error TEXT,
+            mail_access_checked_at TIMESTAMP,
+            mail_access_source TEXT,
             refresh_token_updated_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -1631,6 +1636,16 @@ def init_db():
         cursor.execute("ALTER TABLE accounts ADD COLUMN last_refresh_status TEXT DEFAULT 'never'")
     if 'last_refresh_error' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN last_refresh_error TEXT')
+    if 'mail_access_status' not in columns:
+        cursor.execute("ALTER TABLE accounts ADD COLUMN mail_access_status TEXT DEFAULT 'unknown'")
+    if 'mail_access_reason' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN mail_access_reason TEXT')
+    if 'mail_access_error' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN mail_access_error TEXT')
+    if 'mail_access_checked_at' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN mail_access_checked_at TIMESTAMP')
+    if 'mail_access_source' not in columns:
+        cursor.execute('ALTER TABLE accounts ADD COLUMN mail_access_source TEXT')
     if 'refresh_token_updated_at' not in columns:
         cursor.execute('ALTER TABLE accounts ADD COLUMN refresh_token_updated_at TIMESTAMP')
     if 'account_type' not in columns:
@@ -2102,6 +2117,11 @@ def init_db():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_accounts_last_refresh_status
         ON accounts(last_refresh_status)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_accounts_mail_access_status
+        ON accounts(mail_access_status)
     ''')
 
     cursor.execute('''

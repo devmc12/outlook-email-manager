@@ -1325,6 +1325,9 @@
             initAccountListScroll();
             initAccountPageSizeSelect();
             initAccountSearchScopeSelect();
+            if (typeof initAccountMailAccessStatusFilter === 'function') {
+                initAccountMailAccessStatusFilter();
+            }
             if (typeof initSearchModeToggle === 'function') {
                 initSearchModeToggle();
             }
@@ -1925,8 +1928,77 @@
         // 显示刷新错误信息
         function showRefreshError(accountId, errorMessage, accountEmail, accountType = 'outlook') {
             showModal('refreshErrorModal');
+            const titleEl = document.querySelector('#refreshErrorModal .modal-header h3');
+            if (titleEl) {
+                titleEl.textContent = '⚠️ 刷新失败';
+            }
             document.getElementById('refreshErrorEmail').textContent = `账号：${accountEmail || '未知'}`;
             document.getElementById('refreshErrorMessage').textContent = errorMessage;
+            const reauthorizeBtn = document.getElementById('reauthorizeAccountFromErrorBtn');
+            const canReauthorize = !!accountId && String(accountType || 'outlook').toLowerCase() !== 'imap';
+            if (reauthorizeBtn) {
+                reauthorizeBtn.style.display = canReauthorize ? '' : 'none';
+                reauthorizeBtn.onclick = function () {
+                    hideRefreshErrorModal();
+                    showReauthorizeAccountModal({ id: accountId, email: accountEmail || '' });
+                };
+            }
+            document.getElementById('editAccountFromErrorBtn').onclick = function () {
+                hideRefreshErrorModal();
+                showEditAccountModal(accountId);
+            };
+        }
+
+        function getMailAccessStatusText(status) {
+            const normalized = String(status || '').trim().toLowerCase();
+            if (normalized === 'invalid') return '取信失效';
+            if (normalized === 'failed') return '取信失败';
+            if (normalized === 'ok') return '取信正常';
+            return '取信未检查';
+        }
+
+        function getMailAccessReasonText(reason) {
+            const normalized = String(reason || '').trim().toLowerCase();
+            const labels = {
+                service_abuse: '账号被 Microsoft 标记为滥用',
+                invalid_grant: '授权失效',
+                auth_failed: '认证失败',
+                proxy: '代理连接失败',
+                network: '网络连接失败',
+                fetch_failed: '取信失败',
+                unknown: '未知原因'
+            };
+            return labels[normalized] || normalized || '未知原因';
+        }
+
+        function getMailAccessSourceText(source) {
+            const normalized = String(source || '').trim().toLowerCase();
+            const labels = {
+                refresh_token: '刷新 Token',
+                manual_fetch: '手动取信',
+                forward_poll: '转发轮询',
+                forward_detail: '转发详情'
+            };
+            return labels[normalized] || normalized || '未知来源';
+        }
+
+        function showMailAccessError(accountId, status, reason, errorMessage, accountEmail, source = '', checkedAt = '', accountType = 'outlook') {
+            showModal('refreshErrorModal');
+            const statusText = getMailAccessStatusText(status);
+            const titleEl = document.querySelector('#refreshErrorModal .modal-header h3');
+            if (titleEl) {
+                titleEl.textContent = `⚠️ ${statusText}`;
+            }
+            document.getElementById('refreshErrorEmail').textContent = `账号：${accountEmail || '未知'}`;
+            const checkedText = checkedAt ? formatAbsoluteDateTime(checkedAt) : '未知时间';
+            document.getElementById('refreshErrorMessage').textContent = [
+                `状态：${statusText}`,
+                `来源：${getMailAccessSourceText(source)}`,
+                `原因：${getMailAccessReasonText(reason)}`,
+                `时间：${checkedText}`,
+                '',
+                errorMessage || '未知错误'
+            ].join('\n');
             const reauthorizeBtn = document.getElementById('reauthorizeAccountFromErrorBtn');
             const canReauthorize = !!accountId && String(accountType || 'outlook').toLowerCase() !== 'imap';
             if (reauthorizeBtn) {

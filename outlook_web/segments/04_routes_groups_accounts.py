@@ -752,6 +752,7 @@ def get_account_list_request_args() -> Dict[str, Any]:
         'sort_order': sort_order,
         'tag_ids': normalize_tag_filter_values(request.args.get('tag_ids', '')),
         'include_untagged': include_untagged,
+        'mail_access_status': normalize_account_mail_access_filter(request.args.get('mail_access_status', 'all')),
     }
 
 
@@ -783,13 +784,19 @@ def api_get_accounts():
         sort_order=list_args['sort_order'],
         tag_ids=list_args['tag_ids'],
         include_untagged=list_args['include_untagged'],
+        mail_access_status=list_args['mail_access_status'],
     )
 
     # 返回时隐藏敏感信息
     safe_accounts = []
     for acc in accounts:
         safe_accounts.append(serialize_account_summary(acc, {}))
-    total = count_accounts(group_id, tag_ids=list_args['tag_ids'], include_untagged=list_args['include_untagged'])
+    total = count_accounts(
+        group_id,
+        tag_ids=list_args['tag_ids'],
+        include_untagged=list_args['include_untagged'],
+        mail_access_status=list_args['mail_access_status'],
+    )
     return jsonify(build_account_list_response(
         safe_accounts,
         total,
@@ -1219,6 +1226,7 @@ def api_search_accounts():
         sort_order=list_args['sort_order'],
         tag_ids=list_args['tag_ids'],
         include_untagged=list_args['include_untagged'],
+        mail_access_status=list_args['mail_access_status'],
     )
     safe_accounts = []
     for acc in accounts:
@@ -1229,6 +1237,7 @@ def api_search_accounts():
         query=query,
         tag_ids=list_args['tag_ids'],
         include_untagged=list_args['include_untagged'],
+        mail_access_status=list_args['mail_access_status'],
     )
     return jsonify(build_account_list_response(
         safe_accounts,
@@ -1273,6 +1282,11 @@ def api_get_account(account_id):
             'sort_order': normalize_account_sort_order(account.get('sort_order', 0)),
             'remark': account.get('remark', ''),
             'status': account.get('status', 'active'),
+            'mail_access_status': normalize_account_mail_access_status(account.get('mail_access_status')),
+            'mail_access_reason': account.get('mail_access_reason') or '',
+            'mail_access_error': account.get('mail_access_error') or '',
+            'mail_access_checked_at': account.get('mail_access_checked_at') or '',
+            'mail_access_source': account.get('mail_access_source') or '',
             'created_at': account.get('created_at', ''),
             'updated_at': account.get('updated_at', '')
         }

@@ -222,18 +222,36 @@
                     <div id="tagFilterContainer" class="account-tag-filter-slot">
                         <!-- Tags checkboxes will be rendered here -->
                     </div>
-                    <div id="accountPageSizeContainer" class="account-page-size-row">
-                        <select id="accountPageSizeSelect" class="account-page-size-select"
-                            onchange="handleAccountPageSizeChange(this.value)">
-                            <option value="100">每页 100</option>
-                            <option value="200" selected>每页 200</option>
-                            <option value="500">每页 500</option>
-                            <option value="1000">每页 1000</option>
-                            <option value="2000">每页 2000</option>
-                            <option value="5000">每页 5000</option>
-                            <option value="10000">每页 10000</option>
-                        </select>
+                    <div class="account-list-controls-row">
+                        <div id="accountPageSizeContainer" class="account-page-size-row">
+                            <select id="accountPageSizeSelect" class="account-page-size-select"
+                                onchange="handleAccountPageSizeChange(this.value)">
+                                <option value="100">每页 100</option>
+                                <option value="200" selected>每页 200</option>
+                                <option value="500">每页 500</option>
+                                <option value="1000">每页 1000</option>
+                                <option value="2000">每页 2000</option>
+                                <option value="5000">每页 5000</option>
+                                <option value="10000">每页 10000</option>
+                            </select>
+                        </div>
+                        <button id="accountMailAccessFilterToggle" class="account-mail-access-toggle" type="button"
+                            aria-expanded="false" aria-label="展开状态筛选" title="展开状态筛选"
+                            onclick="toggleAccountMailAccessFilterPanel()">
+                            <span class="account-mail-access-toggle-icon" aria-hidden="true">▾</span>
+                        </button>
                     </div>
+                </div>
+                <div id="accountMailAccessFilterContainer" class="account-mail-access-filter-row" hidden>
+                    <span class="toolbar-label">取信状态</span>
+                    <select id="accountMailAccessStatusFilter" class="account-mail-access-select"
+                        aria-label="取信状态筛选" onchange="handleAccountMailAccessStatusChange(this.value)">
+                        <option value="all" selected>全部状态</option>
+                        <option value="ok">正常</option>
+                        <option value="invalid">失效邮箱</option>
+                        <option value="failed">取信失败</option>
+                        <option value="unknown">未检查</option>
+                    </select>
                 </div>
             </div>
             <div class="account-list" id="accountList">

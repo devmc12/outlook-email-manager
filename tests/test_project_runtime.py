@@ -845,6 +845,29 @@ class ProjectRuntimeTests(unittest.TestCase):
 
         self.assertIn('sort_order', columns)
 
+    def test_init_db_creates_mail_access_status_columns(self):
+        expected_columns = {
+            'mail_access_status',
+            'mail_access_reason',
+            'mail_access_error',
+            'mail_access_checked_at',
+            'mail_access_source',
+        }
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            columns = {
+                row['name']
+                for row in db.execute("PRAGMA table_info(accounts)").fetchall()
+            }
+            index_columns = [
+                row['name']
+                for row in db.execute("PRAGMA index_info(idx_accounts_mail_access_status)").fetchall()
+            ]
+
+        self.assertTrue(expected_columns.issubset(columns))
+        self.assertEqual(index_columns, ['mail_access_status'])
+
     def test_init_db_creates_retained_normal_mail_schema(self):
         expected_columns = {
             'account_id',
@@ -962,6 +985,182 @@ class ProjectRuntimeTests(unittest.TestCase):
         search_payload = search_response.get_json()
         self.assertTrue(search_payload['success'])
         self.assertEqual(search_payload['accounts'][0]['sort_order'], 7)
+
+    def test_mail_access_error_classification(self):
+        status, reason, _error = web_outlook_app.classify_mail_access_error(
+            'AADSTS70000: User account is found to be in service abuse mode.'
+        )
+        self.assertEqual((status, reason), ('invalid', 'service_abuse'))
+
+        status, reason, _error = web_outlook_app.classify_mail_access_error(
+            {'error': 'invalid_grant', 'details': 'refresh token expired'}
+        )
+        self.assertEqual((status, reason), ('invalid', 'invalid_grant'))
+
+        status, reason, _error = web_outlook_app.classify_mail_access_error(
+            '代理连接失败或请求超时，请检查账号代理或分组代理设置'
+        )
+        self.assertEqual((status, reason), ('failed', 'proxy'))
+
+    def test_refresh_result_updates_mail_access_status(self):
+        account_id = self._insert_account('mail-access-refresh@example.com')
+
+        with self.app.app_context():
+            web_outlook_app.log_refresh_result(
+                account_id,
+                'mail-access-refresh@example.com',
+                'manual',
+                'failed',
+                'AADSTS70000: User account is found to be in service abuse mode.',
+            )
+            failed_row = web_outlook_app.get_db().execute(
+                '''
+                SELECT mail_access_status, mail_access_reason, mail_access_source, mail_access_error
+                FROM accounts
+                WHERE id = ?
+                ''',
+                (account_id,)
+            ).fetchone()
+
+        self.assertEqual(failed_row['mail_access_status'], 'invalid')
+        self.assertEqual(failed_row['mail_access_reason'], 'service_abuse')
+        self.assertEqual(failed_row['mail_access_source'], 'refresh_token')
+        self.assertIn('AADSTS70000', failed_row['mail_access_error'])
+
+        with self.app.app_context():
+            web_outlook_app.log_refresh_result(
+                account_id,
+                'mail-access-refresh@example.com',
+                'manual',
+                'success',
+            )
+            success_row = web_outlook_app.get_db().execute(
+                '''
+                SELECT mail_access_status, mail_access_reason, mail_access_error, mail_access_source
+                FROM accounts
+                WHERE id = ?
+                ''',
+                (account_id,)
+            ).fetchone()
+
+        self.assertEqual(success_row['mail_access_status'], 'ok')
+        self.assertIsNone(success_row['mail_access_reason'])
+        self.assertIsNone(success_row['mail_access_error'])
+        self.assertEqual(success_row['mail_access_source'], 'refresh_token')
+
+    def test_manual_mail_fetch_updates_mail_access_status(self):
+        account_id = self._insert_account('mail-access-fetch@example.com')
+        failed_result = {
+            'success': False,
+            'error': '无法获取邮件，所有方式均失败',
+            'details': {
+                'graph': {
+                    'code': 'GRAPH_TOKEN_FAILED',
+                    'details': 'invalid_grant: token revoked',
+                },
+            },
+        }
+
+        with patch.object(web_outlook_app, 'fetch_account_emails', return_value=failed_result):
+            response = self.client.get('/api/emails/mail-access-fetch@example.com?folder=inbox')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()['success'])
+        with self.app.app_context():
+            failed_row = web_outlook_app.get_db().execute(
+                '''
+                SELECT mail_access_status, mail_access_reason, mail_access_source, mail_access_error
+                FROM accounts
+                WHERE id = ?
+                ''',
+                (account_id,)
+            ).fetchone()
+
+        self.assertEqual(failed_row['mail_access_status'], 'invalid')
+        self.assertEqual(failed_row['mail_access_reason'], 'invalid_grant')
+        self.assertEqual(failed_row['mail_access_source'], 'manual_fetch')
+        self.assertIn('invalid_grant', failed_row['mail_access_error'])
+
+        success_result = {
+            'success': True,
+            'emails': [],
+            'method': 'Graph API',
+            'has_more': False,
+        }
+        with patch.object(web_outlook_app, 'fetch_account_emails', return_value=success_result):
+            response = self.client.get('/api/emails/mail-access-fetch@example.com?folder=inbox')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        with self.app.app_context():
+            success_row = web_outlook_app.get_db().execute(
+                '''
+                SELECT mail_access_status, mail_access_reason, mail_access_error, mail_access_source
+                FROM accounts
+                WHERE id = ?
+                ''',
+                (account_id,)
+            ).fetchone()
+
+        self.assertEqual(success_row['mail_access_status'], 'ok')
+        self.assertIsNone(success_row['mail_access_reason'])
+        self.assertIsNone(success_row['mail_access_error'])
+        self.assertEqual(success_row['mail_access_source'], 'manual_fetch')
+
+    def test_account_list_can_filter_by_mail_access_status(self):
+        invalid_id = self._insert_account('mail-access-invalid@example.com')
+        failed_id = self._insert_account('mail-access-failed@example.com')
+        ok_id = self._insert_account('mail-access-ok@example.com')
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                "UPDATE accounts SET mail_access_status = 'invalid' WHERE id = ?",
+                (invalid_id,)
+            )
+            db.execute(
+                "UPDATE accounts SET mail_access_status = 'failed' WHERE id = ?",
+                (failed_id,)
+            )
+            db.execute(
+                "UPDATE accounts SET mail_access_status = 'ok' WHERE id = ?",
+                (ok_id,)
+            )
+            db.commit()
+
+        invalid_response = self.client.get(
+            '/api/accounts',
+            query_string={
+                'group_id': 1,
+                'mail_access_status': 'invalid',
+                'sort_by': 'email',
+                'sort_order': 'asc',
+            },
+        )
+        self.assertEqual(invalid_response.status_code, 200)
+        invalid_payload = invalid_response.get_json()
+        self.assertTrue(invalid_payload['success'])
+        self.assertEqual(
+            [account['email'] for account in invalid_payload['accounts']],
+            ['mail-access-invalid@example.com'],
+        )
+
+        search_response = self.client.get(
+            '/api/accounts/search',
+            query_string={
+                'q': 'mail-access',
+                'mail_access_status': 'failed',
+                'sort_by': 'email',
+                'sort_order': 'asc',
+            },
+        )
+        self.assertEqual(search_response.status_code, 200)
+        search_payload = search_response.get_json()
+        self.assertTrue(search_payload['success'])
+        self.assertEqual(
+            [account['email'] for account in search_payload['accounts']],
+            ['mail-access-failed@example.com'],
+        )
 
     def test_account_search_can_filter_to_group(self):
         target_group_id = self._create_group('搜索分组')
@@ -2622,6 +2821,34 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn('settings.forward_match_include_preview = forwardMatchIncludePreview;', settings_js)
         self.assertIn('.forwarding-match-panel {', modal_css)
         self.assertIn('.forwarding-match-panel__controls {', modal_css)
+
+    def test_mail_access_status_filter_is_wired_to_frontend(self):
+        layout_html = pathlib.Path(ROOT_DIR, 'templates', 'partials', 'index', 'layout.html').read_text(encoding='utf-8')
+        core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
+        groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
+        account_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '04-account-panel.css').read_text(encoding='utf-8')
+
+        self.assertIn('id="accountMailAccessStatusFilter"', layout_html)
+        self.assertIn('id="accountMailAccessFilterToggle"', layout_html)
+        self.assertIn('account-mail-access-toggle-icon', layout_html)
+        self.assertIn('<option value="invalid">失效邮箱</option>', layout_html)
+        self.assertIn('<option value="failed">取信失败</option>', layout_html)
+        self.assertIn("params.set('mail_access_status', mailAccessStatus);", groups_js)
+        self.assertIn('function handleAccountMailAccessStatusChange(value)', groups_js)
+        self.assertIn('function toggleAccountMailAccessFilterPanel()', groups_js)
+        self.assertIn("container.style.display = shouldExpand ? 'flex' : 'none';", groups_js)
+        self.assertIn("container.style.display = shouldShow ? 'flex' : 'none';", groups_js)
+        self.assertIn("if (!nextExpanded && select) {", groups_js)
+        self.assertIn("select.value = 'all';", groups_js)
+        self.assertIn('renderMailAccessStatusPill(acc)', groups_js)
+        self.assertIn('renderMailAccessStatusPill(account)', groups_js)
+        self.assertIn('showMailAccessError(', groups_js)
+        self.assertIn('function showMailAccessError(accountId, status, reason, errorMessage, accountEmail', core_js)
+        self.assertIn('.account-mail-access-select', account_css)
+        self.assertIn('.account-mail-access-toggle', account_css)
+        self.assertIn('.account-mail-access-toggle-icon', account_css)
+        self.assertIn('.account-list-controls-row', account_css)
+        self.assertIn('.account-status-pill.warning', account_css)
 
     def test_provider_fallback_uses_id_mode_for_detail_raw_and_attachments(self):
         emails_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '05-emails.js').read_text(encoding='utf-8')

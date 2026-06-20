@@ -3342,6 +3342,49 @@ class MultiChannelForwardingTests(unittest.TestCase):
         self.assertNotIn('分组:', html_body)
         self.assertNotIn('分组:', telegram_text)
 
+    def test_process_forwarding_job_marks_candidate_fetch_failure(self):
+        failure = {
+            'success': False,
+            'emails': [],
+            'error': '候选邮件拉取失败',
+            'details': {
+                'graph': {
+                    'code': 'GRAPH_TOKEN_FAILED',
+                    'details': 'invalid_grant: token revoked',
+                },
+            },
+        }
+
+        with self.app.app_context():
+            with patch.object(web_outlook_app, 'fetch_forward_candidates', return_value=failure):
+                web_outlook_app.process_forwarding_job()
+
+            row = web_outlook_app.get_db().execute(
+                '''
+                SELECT mail_access_status, mail_access_reason, mail_access_source, mail_access_error
+                FROM accounts
+                WHERE id = ?
+                ''',
+                (self.account_id,)
+            ).fetchone()
+            log_row = web_outlook_app.get_db().execute(
+                '''
+                SELECT channel, status, error_message
+                FROM forwarding_logs
+                WHERE account_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                ''',
+                (self.account_id,)
+            ).fetchone()
+
+        self.assertEqual(row['mail_access_status'], 'invalid')
+        self.assertEqual(row['mail_access_reason'], 'invalid_grant')
+        self.assertEqual(row['mail_access_source'], 'forward_poll')
+        self.assertIn('invalid_grant', row['mail_access_error'])
+        self.assertEqual(log_row['channel'], 'fetch_candidates')
+        self.assertEqual(log_row['status'], 'failed')
+
     def test_process_forwarding_job_includes_account_group_when_enabled(self):
         email_item = {
             'id': 'message-with-group',
