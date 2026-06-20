@@ -206,8 +206,12 @@
 
             .account-list-options-row {
                 display: grid;
-                grid-template-columns: minmax(0, 1fr) 100px;
+                grid-template-columns: minmax(0, 1fr) auto;
                 align-items: center;
+            }
+
+            .account-list-controls-row {
+                gap: 6px;
             }
 
             .tag-filter-dropdown {

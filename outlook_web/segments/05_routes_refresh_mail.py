@@ -593,6 +593,14 @@ def log_refresh_result(account_id: int, account_email: str, refresh_type: str, s
             )
         )
 
+        record_account_mail_access_result(
+            account_id,
+            normalized_status == 'success',
+            sanitized_error,
+            'refresh_token',
+            db_conn=db,
+        )
+
         if should_commit:
             db.commit()
         return True
@@ -3422,7 +3430,12 @@ def is_transport_error_payload(error_payload: Any) -> bool:
 def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int) -> Dict[str, Any]:
     successful = {folder: result for folder, result in results.items() if result.get('success')}
     if not successful:
-        details = {folder: result.get('error') for folder, result in results.items()}
+        details = {}
+        for folder, result in results.items():
+            folder_detail = {'error': result.get('error')}
+            if result.get('details') is not None:
+                folder_detail['details'] = result.get('details')
+            details[folder] = folder_detail
         return {
             'success': False,
             'error': '无法获取邮件，所有方式均失败',
@@ -3447,6 +3460,8 @@ def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int
             folder_summary['method'] = result['method']
         if not result.get('success') and result.get('error') is not None:
             folder_summary['error'] = result.get('error')
+        if not result.get('success') and result.get('details') is not None:
+            folder_summary['details'] = result.get('details')
         folder_summaries[folder] = folder_summary
 
         if result.get('success'):
@@ -3455,7 +3470,10 @@ def merge_folder_results(results: Dict[str, Dict[str, Any]], skip: int, top: int
                 methods.append(result['method'])
             has_more = has_more or bool(result.get('has_more'))
         else:
-            partial_errors[folder] = result.get('error')
+            folder_error = {'error': result.get('error')}
+            if result.get('details') is not None:
+                folder_error['details'] = result.get('details')
+            partial_errors[folder] = folder_error
 
     merged.sort(key=lambda item: parse_email_datetime(item.get('date')) or datetime.min, reverse=True)
     sliced = merged[skip:skip + top]
@@ -3689,6 +3707,12 @@ def api_get_emails(email_addr):
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
     result = fetch_account_emails(account, folder, skip, top)
+    record_account_mail_access_result(
+        account.get('id'),
+        bool(result.get('success')),
+        {'error': result.get('error'), 'details': result.get('details')},
+        'manual_fetch',
+    )
     return jsonify(result)
 
 

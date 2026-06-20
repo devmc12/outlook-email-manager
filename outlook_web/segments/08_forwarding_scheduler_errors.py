@@ -345,10 +345,12 @@ def fetch_forward_candidates(account: Dict[str, Any], top: int = 20, folder: str
     fallback_proxy_urls = get_account_proxy_failover_urls(account)
     result = fetch_account_folder_emails(account, folder, 0, top, proxy_url, fallback_proxy_urls)
     if not result.get('success'):
+        error_payload = {'error': result.get('error'), 'details': result.get('details')}
         return {
             'success': False,
             'emails': [],
-            'error': stringify_forward_error(result.get('error') or result.get('details') or '获取邮件失败'),
+            'error': stringify_forward_error(error_payload or '获取邮件失败'),
+            'details': error_payload,
         }
     return {
         'success': True,
@@ -531,11 +533,18 @@ def process_forwarding_job():
                 if include_junkemail:
                     folders_to_scan.append('junkemail')
                 emails = []
+                folder_failure_details = []
+                successful_folder_fetches = 0
                 had_processing_failure = False
                 for folder_name in folders_to_scan:
                     folder_result = fetch_forward_candidates(account, 20, folder_name)
                     if not folder_result.get('success'):
                         had_processing_failure = True
+                        folder_failure_details.append({
+                            'folder': folder_name,
+                            'error': folder_result.get('error'),
+                            'details': folder_result.get('details'),
+                        })
                         error_message = f'{folder_name} 候选邮件拉取失败: {folder_result.get("error") or "未知错误"}'
                         log_forwarding_result(
                             account['id'],
@@ -553,9 +562,26 @@ def process_forwarding_job():
                             folder_result.get('error') or 'unknown',
                         )
                         continue
+                    successful_folder_fetches += 1
                     folder_emails = folder_result.get('emails', [])
                     cache_forward_poll_candidates_for_retention(account, folder_name, folder_emails, conn)
                     emails.extend(folder_emails)
+                if folder_failure_details:
+                    record_account_mail_access_result(
+                        account['id'],
+                        False,
+                        folder_failure_details,
+                        'forward_poll',
+                        db_conn=conn,
+                    )
+                elif successful_folder_fetches:
+                    record_account_mail_access_result(
+                        account['id'],
+                        True,
+                        None,
+                        'forward_poll',
+                        db_conn=conn,
+                    )
                 recent_emails = []
                 skipped_before_cursor = 0
                 email_success_count = 0
@@ -622,6 +648,17 @@ def process_forwarding_job():
                     if not detail:
                         had_processing_failure = True
                         cursor_blocked_by_failure = True
+                        record_account_mail_access_result(
+                            account['id'],
+                            False,
+                            {
+                                'message_id': item.get('id', ''),
+                                'folder': item.get('folder', 'inbox'),
+                                'error': '获取邮件详情失败',
+                            },
+                            'forward_detail',
+                            db_conn=conn,
+                        )
                         log_forwarding_result(
                             account['id'],
                             account.get('email', ''),
@@ -637,6 +674,13 @@ def process_forwarding_job():
                             item.get('id', ''),
                         )
                         continue
+                    record_account_mail_access_result(
+                        account['id'],
+                        True,
+                        None,
+                        'forward_detail',
+                        db_conn=conn,
+                    )
                     cache_forward_poll_detail_for_retention(account, item, detail, conn)
                     title, plain, html_body, telegram_text = build_forward_payload(account, detail)
                     message_processed = False
@@ -1587,6 +1631,12 @@ def handle_remote_email_list_request(account: Dict[str, Any], requested_email: s
     skip = parse_non_negative_int(request.args.get('skip', 0), 0)
     top = parse_non_negative_int(request.args.get('top', 20), 20, 50)
     result = fetch_account_emails(account, folder, skip, top)
+    record_account_mail_access_result(
+        account.get('id'),
+        bool(result.get('success')),
+        {'error': result.get('error'), 'details': result.get('details')},
+        'manual_fetch',
+    )
     if result.get('success'):
         if is_normal_mail_local_retention_enabled():
             if skip == 0:
@@ -1741,6 +1791,11 @@ def build_mail_content_search_cte(include_terms: List[str], exclude_terms: Optio
                 a.created_at AS account_created_at,
                 a.last_refresh_status AS account_last_refresh_status,
                 a.last_refresh_error AS account_last_refresh_error,
+                a.mail_access_status AS account_mail_access_status,
+                a.mail_access_reason AS account_mail_access_reason,
+                a.mail_access_error AS account_mail_access_error,
+                a.mail_access_checked_at AS account_mail_access_checked_at,
+                a.mail_access_source AS account_mail_access_source,
                 g.name AS group_name,
                 g.color AS group_color,
                 ROW_NUMBER() OVER (
@@ -1804,6 +1859,11 @@ def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
             account_created_at,
             account_last_refresh_status,
             account_last_refresh_error,
+            account_mail_access_status,
+            account_mail_access_reason,
+            account_mail_access_error,
+            account_mail_access_checked_at,
+            account_mail_access_source,
             COUNT(*) AS match_count,
             MAX(received_at_sort) AS latest_match_sort,
             (
@@ -1871,6 +1931,11 @@ def search_retained_normal_mail_messages(query: str, group_id: Optional[int],
             'created_at': row['account_created_at'] or '',
             'last_refresh_status': row['account_last_refresh_status'] or '',
             'last_refresh_error': row['account_last_refresh_error'] or '',
+            'mail_access_status': normalize_account_mail_access_status(row['account_mail_access_status']),
+            'mail_access_reason': row['account_mail_access_reason'] or '',
+            'mail_access_error': row['account_mail_access_error'] or '',
+            'mail_access_checked_at': row['account_mail_access_checked_at'] or '',
+            'mail_access_source': row['account_mail_access_source'] or '',
             'aliases': aliases_by_account.get(account_id_value, []),
             'tags': tags_by_account.get(account_id_value, []),
             'match_count': int(row['match_count'] or 0),
@@ -1975,6 +2040,12 @@ def api_external_get_emails_v2():
     if not account:
         return jsonify({'success': False, 'error': '邮箱账号不存在'}), 404
     result = fetch_account_emails(account, folder, skip, top)
+    record_account_mail_access_result(
+        account.get('id'),
+        bool(result.get('success')),
+        {'error': result.get('error'), 'details': result.get('details')},
+        'manual_fetch',
+    )
     if result.get('success'):
         if subject_contains or from_contains or keyword:
             result['emails'] = [

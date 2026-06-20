@@ -1,9 +1,10 @@
-        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, clearEmailSelection, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, hideNewMailNotice, isMobileLayout, isTempEmailGroup, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmailList, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setMailSyncStatus, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showEmailList, showGetRefreshTokenModal, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateEmailListHeader, updateMobileContext */
+        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, clearEmailSelection, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, hideNewMailNotice, isMobileLayout, isTempEmailGroup, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmailList, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setMailSyncStatus, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showEmailList, showGetRefreshTokenModal, showMailAccessError, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateEmailListHeader, updateMobileContext */
 
         // ==================== 分组相关 ====================
 
         const ACCOUNT_SEARCH_MAX_TERMS = 200;
         const MAIL_SEARCH_EMAIL_LIMIT = 30;
+        const ACCOUNT_MAIL_ACCESS_STATUS_VALUES = new Set(['all', 'ok', 'invalid', 'failed', 'unknown']);
         let currentSearchMode = 'account';
         let mailSearchRequestSeq = 0;
         let mailSearchState = {
@@ -1127,7 +1128,7 @@
 
         function hasAccountServerSideFilters() {
             const filters = getAccountTagFilterParams();
-            return filters.tagIds.length > 0 || filters.includeUntagged;
+            return filters.tagIds.length > 0 || filters.includeUntagged || getAccountMailAccessStatusFilter() !== 'all';
         }
 
         function normalizeAccountPageSize(value) {
@@ -1183,6 +1184,106 @@
             select.value = savedScope === 'group' ? 'group' : 'all';
         }
 
+        function getAccountMailAccessStatusFilter() {
+            if (!isAccountMailAccessFilterExpanded()) {
+                return 'all';
+            }
+            const select = document.getElementById('accountMailAccessStatusFilter');
+            const value = String(select?.value || 'all').trim().toLowerCase();
+            return ACCOUNT_MAIL_ACCESS_STATUS_VALUES.has(value) ? value : 'all';
+        }
+
+        function canUseAccountMailAccessFilter() {
+            return !isTempEmailGroup && !isMailSearchMode();
+        }
+
+        function isAccountMailAccessFilterExpanded() {
+            if (!canUseAccountMailAccessFilter()) {
+                return false;
+            }
+            const toggle = document.getElementById('accountMailAccessFilterToggle');
+            return toggle?.getAttribute('aria-expanded') === 'true';
+        }
+
+        function setAccountMailAccessFilterExpanded(expanded) {
+            const shouldExpand = !!expanded && canUseAccountMailAccessFilter();
+            const toggle = document.getElementById('accountMailAccessFilterToggle');
+            const container = document.getElementById('accountMailAccessFilterContainer');
+            const select = document.getElementById('accountMailAccessStatusFilter');
+
+            if (toggle) {
+                toggle.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+                const label = shouldExpand ? '收起状态筛选' : '展开状态筛选';
+                toggle.setAttribute('aria-label', label);
+                toggle.title = label;
+            }
+            if (container) {
+                container.hidden = !shouldExpand;
+                container.style.display = shouldExpand ? 'flex' : 'none';
+            }
+            if (select) {
+                select.disabled = !shouldExpand;
+            }
+        }
+
+        function initAccountMailAccessStatusFilter() {
+            const select = document.getElementById('accountMailAccessStatusFilter');
+            if (select) {
+                select.value = 'all';
+            }
+            setAccountMailAccessFilterExpanded(false);
+        }
+
+        function syncAccountMailAccessStatusVisibility() {
+            const container = document.getElementById('accountMailAccessFilterContainer');
+            const select = document.getElementById('accountMailAccessStatusFilter');
+            const toggle = document.getElementById('accountMailAccessFilterToggle');
+            const hidden = !canUseAccountMailAccessFilter();
+            const expanded = isAccountMailAccessFilterExpanded();
+            if (toggle) {
+                toggle.style.display = hidden ? 'none' : 'inline-flex';
+                toggle.disabled = hidden;
+                if (hidden) {
+                    toggle.setAttribute('aria-expanded', 'false');
+                    toggle.setAttribute('aria-label', '展开状态筛选');
+                    toggle.title = '展开状态筛选';
+                }
+            }
+            if (container) {
+                const shouldShow = !hidden && expanded;
+                container.hidden = !shouldShow;
+                container.style.display = shouldShow ? 'flex' : 'none';
+            }
+            if (select) {
+                select.disabled = hidden || !expanded;
+            }
+        }
+
+        function toggleAccountMailAccessFilterPanel() {
+            if (!canUseAccountMailAccessFilter()) {
+                return;
+            }
+
+            const select = document.getElementById('accountMailAccessStatusFilter');
+            const nextExpanded = !isAccountMailAccessFilterExpanded();
+            const previousValue = ACCOUNT_MAIL_ACCESS_STATUS_VALUES.has(String(select?.value || '').toLowerCase())
+                ? String(select.value).toLowerCase()
+                : 'all';
+
+            setAccountMailAccessFilterExpanded(nextExpanded);
+
+            if (!nextExpanded && select) {
+                select.value = 'all';
+            }
+
+            if (!nextExpanded && previousValue === 'all') {
+                return;
+            }
+
+            invalidateAccountCaches();
+            refreshVisibleAccountList(true);
+        }
+
         function syncAccountSearchScopeVisibility() {
             const container = document.querySelector('.search-container');
             const wrap = document.getElementById('accountSearchScopeWrap');
@@ -1198,6 +1299,7 @@
             if (select) {
                 select.disabled = hidden;
             }
+            syncAccountMailAccessStatusVisibility();
         }
 
         function handleAccountSearchScopeChange(value) {
@@ -1206,6 +1308,20 @@
             const searchQuery = (document.getElementById('globalSearch')?.value || '').trim();
             if (searchQuery && !isTempEmailGroup) {
                 searchAccounts(searchQuery, true);
+            }
+        }
+
+        function handleAccountMailAccessStatusChange(value) {
+            const select = document.getElementById('accountMailAccessStatusFilter');
+            const normalized = ACCOUNT_MAIL_ACCESS_STATUS_VALUES.has(String(value || '').toLowerCase())
+                ? String(value || '').toLowerCase()
+                : 'all';
+            if (select) {
+                select.value = normalized;
+            }
+            invalidateAccountCaches();
+            if (!isTempEmailGroup) {
+                refreshVisibleAccountList(true);
             }
         }
 
@@ -1230,6 +1346,10 @@
             }
             if (filters.includeUntagged) {
                 params.set('include_untagged', '1');
+            }
+            const mailAccessStatus = getAccountMailAccessStatusFilter();
+            if (mailAccessStatus !== 'all') {
+                params.set('mail_access_status', mailAccessStatus);
             }
             return params;
         }
@@ -1398,6 +1518,44 @@
                 : '';
         }
 
+        function getMailAccessSourceLabel(source) {
+            const normalized = String(source || '').trim().toLowerCase();
+            const labels = {
+                refresh_token: '刷新 Token',
+                manual_fetch: '手动取信',
+                forward_poll: '转发轮询',
+                forward_detail: '转发详情'
+            };
+            return labels[normalized] || normalized || '未知来源';
+        }
+
+        function getMailAccessReasonLabel(reason) {
+            const normalized = String(reason || '').trim().toLowerCase();
+            const labels = {
+                service_abuse: '账号被 Microsoft 标记为滥用',
+                invalid_grant: '授权失效',
+                auth_failed: '认证失败',
+                proxy: '代理连接失败',
+                network: '网络连接失败',
+                fetch_failed: '取信失败',
+                unknown: '未知原因'
+            };
+            return labels[normalized] || normalized || '未知原因';
+        }
+
+        function renderMailAccessStatusPill(account) {
+            const status = String(account?.mail_access_status || 'unknown').toLowerCase();
+            if (status === 'invalid') {
+                const title = `取信失效：${getMailAccessReasonLabel(account.mail_access_reason)}`;
+                return `<span class="account-status-pill danger" title="${escapeHtml(title)}">取信失效</span>`;
+            }
+            if (status === 'failed') {
+                const title = `取信失败：${getMailAccessReasonLabel(account.mail_access_reason)}`;
+                return `<span class="account-status-pill warning" title="${escapeHtml(title)}">取信失败</span>`;
+            }
+            return '';
+        }
+
         function renderAccountTagSummary(tags) {
             const safeTags = Array.isArray(tags) ? tags : [];
             const visibleTags = safeTags.slice(0, 2);
@@ -1518,6 +1676,7 @@
                             ${showForwardStatusLabel(!!acc.forward_enabled)}
                             ${acc.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
                             ${acc.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
+                            ${renderMailAccessStatusPill(acc)}
                         </div>
                         ${renderAccountGroupSummary(acc, showSearchGroupInfo)}
                         ${renderAccountAliasSummary(acc.aliases)}
@@ -1588,6 +1747,9 @@
             }
             if (acc.last_refresh_status === 'failed') {
                 footerParts.push('<button class="account-error-btn" onclick="event.stopPropagation(); showRefreshError(' + acc.id + ', \'' + escapeJs(acc.last_refresh_error || '未知错误') + '\', \'' + escapeJs(acc.email) + '\', \'' + escapeJs(acc.account_type || 'outlook') + '\')">查看错误</button>');
+            }
+            if (['invalid', 'failed'].includes(String(acc.mail_access_status || '').toLowerCase())) {
+                footerParts.push('<button class="account-error-btn" onclick="event.stopPropagation(); showMailAccessError(' + acc.id + ', \'' + escapeJs(acc.mail_access_status || 'unknown') + '\', \'' + escapeJs(acc.mail_access_reason || 'unknown') + '\', \'' + escapeJs(acc.mail_access_error || '未知错误') + '\', \'' + escapeJs(acc.email || '') + '\', \'' + escapeJs(acc.mail_access_source || '') + '\', \'' + escapeJs(acc.mail_access_checked_at || '') + '\', \'' + escapeJs(acc.account_type || 'outlook') + '\')">查看取信错误</button>');
             }
             if (!footerParts.length) {
                 return '';
@@ -1739,6 +1901,7 @@
                                 ${showForwardStatusLabel(!!account.forward_enabled)}
                                 ${account.status === 'inactive' ? '<span class="account-status-pill muted">已停用</span>' : ''}
                                 ${account.last_refresh_status === 'failed' ? '<span class="account-status-pill danger">刷新失败</span>' : ''}
+                                ${renderMailAccessStatusPill(account)}
                                 <span class="mail-search-count-pill">${Number(account.match_count) || 0} 封命中</span>
                             </div>
                             ${renderAccountGroupSummary(account, true)}

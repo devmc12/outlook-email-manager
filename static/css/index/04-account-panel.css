@@ -305,7 +305,7 @@
 
         .account-list-options-row {
             display: grid;
-            grid-template-columns: minmax(0, 1fr) 100px;
+            grid-template-columns: minmax(0, 1fr) auto;
             align-items: center;
             gap: 8px;
             min-width: 0;
@@ -325,6 +325,87 @@
             align-items: center;
             justify-content: flex-end;
             min-width: 0;
+        }
+
+        .account-list-controls-row {
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .account-mail-access-toggle {
+            width: 34px;
+            min-width: 34px;
+            height: 34px;
+            padding: 0;
+            border: 1px solid #cfd6df;
+            border-radius: 12px;
+            background: #f8fafc;
+            color: #334155;
+            cursor: pointer;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+        }
+
+        .account-mail-access-toggle:hover {
+            background-color: #ffffff;
+            border-color: #94a3b8;
+            color: #111827;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+        }
+
+        .account-mail-access-toggle[aria-expanded="true"] {
+            background-color: #1a1a1a;
+            color: #ffffff;
+            border-color: #1a1a1a;
+            box-shadow: 0 8px 20px rgba(26, 26, 26, 0.18);
+        }
+
+        .account-mail-access-toggle-icon {
+            font-size: 22px;
+            font-weight: 700;
+            line-height: 1;
+            transition: transform 0.15s;
+            transform: translateY(-1px);
+        }
+
+        .account-mail-access-toggle[aria-expanded="true"] .account-mail-access-toggle-icon {
+            transform: translateY(-1px) rotate(180deg);
+        }
+
+        .account-mail-access-filter-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+            width: 100%;
+            padding: 2px 0 0;
+            flex-wrap: wrap;
+        }
+
+        .account-mail-access-select {
+            width: 112px;
+            min-height: 34px;
+            padding: 0 6px;
+            border: 1px solid #d9dce3;
+            border-radius: 10px;
+            background: #ffffff;
+            color: #374151;
+            font-size: 12px;
+            font-weight: 600;
+            outline: none;
+            flex-shrink: 0;
+        }
+
+        .account-mail-access-select:focus {
+            border-color: #1a1a1a;
+            box-shadow: 0 0 0 3px rgba(26, 26, 26, 0.08);
         }
 
         .account-page-size-select {
@@ -819,6 +900,11 @@
         .account-status-pill.danger {
             background-color: #fdebec;
             color: #b42318;
+        }
+
+        .account-status-pill.warning {
+            background-color: #fffbeb;
+            color: #b45309;
         }
 
         .account-status-pill.muted {

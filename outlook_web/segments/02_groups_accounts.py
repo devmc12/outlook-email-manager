@@ -552,7 +552,8 @@ def normalize_account_search_terms(query: Any) -> List[str]:
 
 def build_account_where_clause(group_id: int = None, query: str = '',
                                tag_ids: Any = None, include_untagged: bool = False,
-                               include_descendants: bool = True) -> tuple[str, List[Any]]:
+                               include_descendants: bool = True,
+                               mail_access_status: Any = 'all') -> tuple[str, List[Any]]:
     clauses = []
     params: List[Any] = []
 
@@ -583,6 +584,11 @@ def build_account_where_clause(group_id: int = None, query: str = '',
     if tag_clause:
         clauses.append(tag_clause)
         params.extend(tag_params)
+
+    normalized_mail_access_status = normalize_account_mail_access_filter(mail_access_status)
+    if normalized_mail_access_status != 'all':
+        clauses.append("COALESCE(NULLIF(a.mail_access_status, ''), 'unknown') = ?")
+        params.append(normalized_mail_access_status)
 
     if not clauses:
         return '', []
@@ -656,7 +662,8 @@ def serialize_account_rows(rows: List[sqlite3.Row], db=None) -> List[Dict]:
 def load_accounts(group_id: int = None, limit: Any = None, offset: Any = 0,
                   sort_by: Any = 'created_at', sort_order: Any = 'desc',
                   tag_ids: Any = None, include_untagged: bool = False,
-                  include_descendants: bool = True) -> List[Dict]:
+                  include_descendants: bool = True,
+                  mail_access_status: Any = 'all') -> List[Dict]:
     """从数据库加载邮箱账号"""
     db = get_db()
     normalized_limit, normalized_offset = normalize_account_pagination(limit, offset)
@@ -665,6 +672,7 @@ def load_accounts(group_id: int = None, limit: Any = None, offset: Any = 0,
         tag_ids=tag_ids,
         include_untagged=include_untagged,
         include_descendants=include_descendants,
+        mail_access_status=mail_access_status,
     )
     order_clause = build_account_order_clause(sort_by, sort_order)
     pagination_clause = ''
@@ -686,7 +694,8 @@ def load_accounts(group_id: int = None, limit: Any = None, offset: Any = 0,
 
 def count_accounts(group_id: int = None, query: str = '',
                    tag_ids: Any = None, include_untagged: bool = False,
-                   include_descendants: bool = True) -> int:
+                   include_descendants: bool = True,
+                   mail_access_status: Any = 'all') -> int:
     db = get_db()
     normalized_query = str(query or '').strip()
     joins = '''
@@ -704,6 +713,7 @@ def count_accounts(group_id: int = None, query: str = '',
         tag_ids,
         include_untagged,
         include_descendants,
+        mail_access_status=mail_access_status,
     )
     count_expr = 'COUNT(DISTINCT a.id)' if normalized_query else 'COUNT(*)'
     row = db.execute(f'''
@@ -718,7 +728,8 @@ def count_accounts(group_id: int = None, query: str = '',
 def search_account_records(query: str, limit: Any = None, offset: Any = 0,
                            sort_by: Any = 'created_at', sort_order: Any = 'desc',
                            tag_ids: Any = None, include_untagged: bool = False,
-                           group_id: int = None, include_descendants: bool = True) -> List[Dict]:
+                           group_id: int = None, include_descendants: bool = True,
+                           mail_access_status: Any = 'all') -> List[Dict]:
     db = get_db()
     normalized_limit, normalized_offset = normalize_account_pagination(limit, offset)
     where_clause, params = build_account_where_clause(
@@ -727,6 +738,7 @@ def search_account_records(query: str, limit: Any = None, offset: Any = 0,
         tag_ids=tag_ids,
         include_untagged=include_untagged,
         include_descendants=include_descendants,
+        mail_access_status=mail_access_status,
     )
     order_clause = build_account_order_clause(sort_by, sort_order)
     pagination_clause = ''
@@ -771,6 +783,176 @@ def normalize_account_refresh_status(status: Any) -> str:
     if normalized in {'success', 'failed', 'never'}:
         return normalized
     return 'never'
+
+
+VALID_ACCOUNT_MAIL_ACCESS_STATUSES = {'unknown', 'ok', 'invalid', 'failed'}
+VALID_ACCOUNT_MAIL_ACCESS_FILTERS = VALID_ACCOUNT_MAIL_ACCESS_STATUSES | {'all'}
+
+
+def normalize_account_mail_access_status(status: Any) -> str:
+    normalized = str(status or '').strip().lower()
+    if normalized in VALID_ACCOUNT_MAIL_ACCESS_STATUSES:
+        return normalized
+    return 'unknown'
+
+
+def normalize_account_mail_access_filter(status: Any) -> str:
+    normalized = str(status or '').strip().lower()
+    if normalized in VALID_ACCOUNT_MAIL_ACCESS_FILTERS:
+        return normalized
+    return 'all'
+
+
+def flatten_mail_access_error(value: Any, max_items: int = 80) -> str:
+    parts: List[str] = []
+
+    def collect(item: Any) -> None:
+        if item is None or len(parts) >= max_items:
+            return
+        if isinstance(item, dict):
+            for key in ('code', 'error', 'error_description', 'message', 'type', 'status', 'details', 'trace_id'):
+                if key in item:
+                    collect(item.get(key))
+            for key, nested in item.items():
+                if key not in {'code', 'error', 'error_description', 'message', 'type', 'status', 'details', 'trace_id'}:
+                    collect(nested)
+            return
+        if isinstance(item, (list, tuple, set)):
+            for nested in item:
+                collect(nested)
+            return
+        text = str(item or '').strip()
+        if text:
+            parts.append(text)
+
+    collect(value)
+    return sanitize_error_details(' | '.join(parts))[:1000]
+
+
+def classify_mail_access_error(error: Any) -> tuple[str, str, str]:
+    error_text = flatten_mail_access_error(error)
+    normalized = error_text.lower()
+
+    if 'aadsts70000' in normalized or 'service abuse mode' in normalized:
+        return 'invalid', 'service_abuse', error_text
+    if 'invalid_grant' in normalized:
+        return 'invalid', 'invalid_grant', error_text
+    auth_markers = (
+        'authorization has been denied',
+        'refresh token has expired',
+        'token has expired',
+        'invalid refresh token',
+        'invalid token',
+        'authenticationfailed',
+        'authentication failed',
+        'authenticate failed',
+        'login failed',
+        'invalid credentials',
+        'imap_auth_failed',
+        'oauthbearer',
+    )
+    if any(marker in normalized for marker in auth_markers):
+        return 'invalid', 'auth_failed', error_text
+    if 'proxy' in normalized or '代理' in normalized:
+        return 'failed', 'proxy', error_text
+    network_markers = (
+        'timeout',
+        'timed out',
+        'connection',
+        'connect failed',
+        'network',
+        'dns',
+        '连接',
+        '超时',
+    )
+    if any(marker in normalized for marker in network_markers):
+        return 'failed', 'network', error_text
+    return 'failed', 'fetch_failed', error_text or '未知错误'
+
+
+def update_account_mail_access_state(account_id: Any, status: Any,
+                                     error: Any = None, source: str = '',
+                                     reason: Optional[str] = None,
+                                     db_conn=None) -> bool:
+    try:
+        normalized_account_id = int(account_id)
+    except (TypeError, ValueError):
+        return False
+    if normalized_account_id <= 0:
+        return False
+
+    normalized_status = normalize_account_mail_access_status(status)
+    if normalized_status == 'ok':
+        normalized_reason = None
+        sanitized_error = None
+    elif normalized_status == 'unknown':
+        normalized_reason = None
+        sanitized_error = flatten_mail_access_error(error) or None
+    else:
+        classified_status, classified_reason, classified_error = classify_mail_access_error(error)
+        normalized_status = classified_status if normalized_status not in {'invalid', 'failed'} else normalized_status
+        normalized_reason = str(reason or classified_reason or 'unknown').strip()[:80] or 'unknown'
+        sanitized_error = classified_error[:1000] if classified_error else None
+
+    normalized_source = str(source or '').strip().lower()[:80] or None
+    db = db_conn or get_db()
+    should_commit = db_conn is None
+    try:
+        db.execute(
+            '''
+            UPDATE accounts
+            SET mail_access_status = ?,
+                mail_access_reason = ?,
+                mail_access_error = ?,
+                mail_access_checked_at = CURRENT_TIMESTAMP,
+                mail_access_source = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            ''',
+            (
+                normalized_status,
+                normalized_reason,
+                sanitized_error,
+                normalized_source,
+                normalized_account_id,
+            )
+        )
+        if should_commit:
+            db.commit()
+        return True
+    except Exception as exc:
+        if should_commit:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        try:
+            app.logger.warning(
+                'update mail access state failed: account_id=%s status=%s source=%s error=%s',
+                normalized_account_id,
+                normalized_status,
+                normalized_source or '',
+                str(exc),
+            )
+        except Exception:
+            pass
+        return False
+
+
+def record_account_mail_access_result(account_id: Any, success: bool,
+                                      error: Any = None, source: str = '',
+                                      db_conn=None) -> bool:
+    if success:
+        return update_account_mail_access_state(account_id, 'ok', None, source, db_conn=db_conn)
+    status, reason, error_text = classify_mail_access_error(error)
+    return update_account_mail_access_state(
+        account_id,
+        status,
+        error_text,
+        source,
+        reason=reason,
+        db_conn=db_conn,
+    )
 
 
 def normalize_account_status(status: Any) -> str:
@@ -1267,6 +1449,11 @@ def serialize_account_summary(account: Dict[str, Any], last_refresh_log: Optiona
         'last_refresh_at': refresh_state['last_refresh_at'],
         'last_refresh_status': refresh_state['last_refresh_status'],
         'last_refresh_error': refresh_state['last_refresh_error'],
+        'mail_access_status': normalize_account_mail_access_status(account.get('mail_access_status')),
+        'mail_access_reason': account.get('mail_access_reason') or '',
+        'mail_access_error': account.get('mail_access_error') or '',
+        'mail_access_checked_at': account.get('mail_access_checked_at') or '',
+        'mail_access_source': account.get('mail_access_source') or '',
         'created_at': account.get('created_at', ''),
         'updated_at': account.get('updated_at', ''),
         'tags': account.get('tags', [])
