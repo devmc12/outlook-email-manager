@@ -1,5 +1,18 @@
 # Project Fork New
 
+## 26028b1 - feat: add mail access status tracking
+
+本次提交新增了账号级取信状态标记与筛选能力，用于区分永久性账号失效问题和临时取信失败问题，并帮助在账号列表中快速定位异常邮箱。
+
+- 在 `accounts` 表新增 `mail_access_status`、`mail_access_reason`、`mail_access_error`、`mail_access_checked_at`、`mail_access_source` 字段，并补充索引与迁移逻辑。
+- 新增统一的取信错误分类与状态写入逻辑，可识别 `AADSTS70000 / service abuse mode`、`invalid_grant`、认证失败、代理异常和网络超时等类型。
+- 刷新 token、用户手动取信、邮件转发轮询候选拉取失败、邮件详情拉取失败都会更新账号取信状态；成功后会恢复为 `ok`。
+- 普通邮箱 `folder=all` 失败时会保留 inbox / junkemail 下游 Graph、IMAP、OAuth 的详细错误，避免前端只看到“所有方式均失败”的粗略提示。
+- `/api/accounts`、`/api/accounts/search` 和账号详情返回新增取信状态字段，并支持按 `mail_access_status` 服务端筛选。
+- 账号列表新增取信状态标签、查看取信错误入口，以及默认折叠的取信状态筛选面板；展开后可筛选正常、失效邮箱、取信失败和未检查账号。
+- 邮件内容搜索命中账号列表同步展示取信状态，保持和普通账号列表一致的卡片信息。
+- 新增后端与前端测试，覆盖 schema、错误分类、状态写入、账号筛选、折叠筛选入口和转发失败写入状态等场景。
+
 ## 966a65b - feat: add forwarding match rules
 
 本次提交新增了邮件转发轮询的匹配规则能力，用于在拉取详情和发送转发前按候选邮件摘要筛选。
