@@ -1109,6 +1109,8 @@ class ProjectRuntimeTests(unittest.TestCase):
 
     def test_account_list_can_filter_by_mail_access_status(self):
         invalid_id = self._insert_account('mail-access-invalid@example.com')
+        other_group_id = self._create_group('取信状态分组')
+        other_invalid_id = self._insert_account('mail-access-invalid-other@example.com', group_id=other_group_id)
         failed_id = self._insert_account('mail-access-failed@example.com')
         ok_id = self._insert_account('mail-access-ok@example.com')
 
@@ -1117,6 +1119,10 @@ class ProjectRuntimeTests(unittest.TestCase):
             db.execute(
                 "UPDATE accounts SET mail_access_status = 'invalid' WHERE id = ?",
                 (invalid_id,)
+            )
+            db.execute(
+                "UPDATE accounts SET mail_access_status = 'invalid' WHERE id = ?",
+                (other_invalid_id,)
             )
             db.execute(
                 "UPDATE accounts SET mail_access_status = 'failed' WHERE id = ?",
@@ -1143,6 +1149,22 @@ class ProjectRuntimeTests(unittest.TestCase):
         self.assertEqual(
             [account['email'] for account in invalid_payload['accounts']],
             ['mail-access-invalid@example.com'],
+        )
+
+        all_groups_response = self.client.get(
+            '/api/accounts',
+            query_string={
+                'mail_access_status': 'invalid',
+                'sort_by': 'email',
+                'sort_order': 'asc',
+            },
+        )
+        self.assertEqual(all_groups_response.status_code, 200)
+        all_groups_payload = all_groups_response.get_json()
+        self.assertTrue(all_groups_payload['success'])
+        self.assertEqual(
+            [account['email'] for account in all_groups_payload['accounts']],
+            ['mail-access-invalid-other@example.com', 'mail-access-invalid@example.com'],
         )
 
         search_response = self.client.get(
@@ -2344,17 +2366,18 @@ class FrontendAccountSearchScopeTests(unittest.TestCase):
         empty_branch = groups_js[empty_branch_start:empty_branch_end]
 
         self.assertNotIn("setAccountSearchScope('group');", empty_branch)
-        self.assertIn('loadAccountsByGroup(currentGroupId, forceRefresh);', empty_branch)
+        self.assertIn('const groupId = getAccountListRequestGroupId();', empty_branch)
+        self.assertIn('loadAccountsByGroup(groupId, forceRefresh);', empty_branch)
 
-    def test_search_scope_change_only_researches_when_query_exists(self):
+    def test_search_scope_change_reloads_when_query_or_status_filter_exists(self):
         groups_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '02-groups.js').read_text(encoding='utf-8')
         function_start = groups_js.index('function handleAccountSearchScopeChange')
         function_end = groups_js.index('function handleAccountMailAccessStatusChange', function_start)
         function_source = groups_js[function_start:function_end]
 
         self.assertIn('setAccountSearchScope(value);', function_source)
-        self.assertIn('if (searchQuery && !isTempEmailGroup) {', function_source)
-        self.assertNotIn('refreshVisibleAccountList(true);', function_source)
+        self.assertIn("if (!isTempEmailGroup && (searchQuery || getAccountMailAccessStatusFilter() !== 'all')) {", function_source)
+        self.assertIn('refreshVisibleAccountList(true);', function_source)
 
     def test_account_search_input_is_saved_and_restored(self):
         core_js = pathlib.Path(ROOT_DIR, 'static', 'js', 'index', '01-core.js').read_text(encoding='utf-8')
@@ -2959,6 +2982,12 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         self.assertIn('<option value="invalid">失效邮箱</option>', layout_html)
         self.assertIn('<option value="failed">取信失败</option>', layout_html)
         self.assertIn("params.set('mail_access_status', mailAccessStatus);", groups_js)
+        self.assertIn('function shouldUseAllGroupsForAccountStatusFilter()', groups_js)
+        self.assertIn('function getAccountListRequestGroupId()', groups_js)
+        self.assertIn("getAccountSearchScope() === 'all'", groups_js)
+        self.assertIn("params.set('group_id', String(groupId));", groups_js)
+        self.assertIn("updateAccountPaginationState(isAllGroupsRequest ? 'all-groups' : 'group'", groups_js)
+        self.assertIn("updateCurrentGroupHeader(null, `所有分组", groups_js)
         self.assertIn('function handleAccountMailAccessStatusChange(value)', groups_js)
         self.assertIn('function toggleAccountMailAccessFilterPanel()', groups_js)
         self.assertIn("container.style.display = shouldExpand ? 'flex' : 'none';", groups_js)
