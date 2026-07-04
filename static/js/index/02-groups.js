@@ -338,6 +338,7 @@
                 const hasChildren = Array.isArray(group.children) && group.children.length > 0;
                 const collapsed = hasChildren && isGroupCollapsed(group.id);
                 const groupName = normalizeGroupName(group.name);
+                const groupTitle = escapeHtml(groupName);
                 const groupIdBadgeText = formatGroupIdBadgeText(group.id);
                 const count = group.descendant_account_count ?? group.account_count ?? 0;
 
@@ -346,12 +347,13 @@
                           data-group-id="${group.id}"
                           data-parent-id="${normalizeGroupParentId(group.parent_id) || ''}"
                           data-level="${level}"
+                          title="${groupTitle}"
                           ${isMovable ? `onpointerdown="handleGroupPointerDown(event, ${group.id})"` : ''}
                           onclick="handleGroupClick(event, ${group.id})">
                         <div class="group-row-1">
                             ${hasChildren && !isTempGroup ? `<button type="button" class="group-toggle ${collapsed ? 'collapsed' : ''}" onclick="toggleGroupCollapsed(event, ${group.id})" title="${collapsed ? '展开' : '折叠'}">▾</button>` : '<span class="group-toggle-spacer"></span>'}
                             <div class="group-color" style="background-color: ${group.color || '#666'}"></div>
-                            <span class="group-name">${escapeHtml(groupName)}${isTempGroup ? ' ⚡' : ''}</span>
+                            <span class="group-name" title="${groupTitle}">${escapeHtml(groupName)}${isTempGroup ? ' ⚡' : ''}</span>
                             <span class="group-count">${count || 0}</span>
                             <div class="group-actions">
                                 ${!isSystem ? `<button class="group-action-btn" onclick="event.stopPropagation(); editGroup(${group.id})" title="编辑">✏️</button>` : ''}
