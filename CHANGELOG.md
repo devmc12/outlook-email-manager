@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.7.0+1] - 2026-07-04
+
+### Fixed
+- 修正邮件转发匹配规则语义：规则现在表示“命中后不转发”，会在拉取详情前跳过命中的候选邮件；空规则仍保持不过滤的原有行为。
+- 更新“邮件转发设置”文案为“不转发匹配规则”，并保留按标题匹配、可选匹配预览正文以及失败邮件游标保护逻辑。
+
 ## [2.7.0] - 2026-07-04
 
 ### Added

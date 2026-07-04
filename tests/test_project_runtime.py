@@ -2923,7 +2923,8 @@ class FrontendTimezoneBootstrapTests(unittest.TestCase):
         forwarding_section = settings_html.split('id="forwardingSettingsSection"', 1)[1].split('</section>', 1)[0]
 
         self.assertIn('id="forwardMatchRules"', forwarding_section)
-        self.assertIn('转发匹配规则', forwarding_section)
+        self.assertIn('不转发匹配规则', forwarding_section)
+        self.assertIn('命中后不转发', forwarding_section)
         self.assertIn('id="forwardMatchIncludePreview"', forwarding_section)
         self.assertIn('同时匹配预览正文', forwarding_section)
         self.assertIn("document.getElementById('forwardMatchRules').value = data.settings.forward_match_rules || '';", settings_js)

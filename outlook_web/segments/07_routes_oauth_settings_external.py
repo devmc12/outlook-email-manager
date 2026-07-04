@@ -1107,9 +1107,9 @@ def api_update_settings():
             data.get('forward_match_rules')
         )
         if set_setting('forward_match_rules', normalized_forward_match_rules):
-            updated.append('转发匹配规则')
+            updated.append('不转发匹配规则')
         else:
-            errors.append('保存转发匹配规则失败')
+            errors.append('保存不转发匹配规则失败')
 
     if 'forward_match_include_preview' in data:
         include_preview = str(data['forward_match_include_preview']).lower()

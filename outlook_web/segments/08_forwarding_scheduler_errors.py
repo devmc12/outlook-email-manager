@@ -119,7 +119,7 @@ def should_forward_match_preview() -> bool:
 def candidate_matches_forward_rules(item: Dict[str, Any], rules: list[str],
                                     include_preview: bool = False) -> bool:
     if not rules:
-        return True
+        return False
 
     subject = str(item.get('subject') or '').lower()
     preview = str(item.get('body_preview') or '').lower() if include_preview else ''
@@ -815,7 +815,7 @@ def process_forwarding_account(account_row: Dict[str, Any], job_config: Dict[str
             forward_match_include_preview = bool(job_config.get('forward_match_include_preview'))
 
             for item_time, item in recent_emails:
-                if not candidate_matches_forward_rules(
+                if candidate_matches_forward_rules(
                     item,
                     forward_match_rules,
                     forward_match_include_preview,
