@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.7.0+3] - 2026-07-04
+
+### Fixed
+- 修复账号列表取信状态筛选在“所有分组”范围下仍只查询当前选中分组的问题；现在无搜索词时也会按搜索范围决定是否携带 `group_id`。
+- 取信状态筛选跨所有分组时，账号卡会展示所属分组，列表标题显示“所有分组”，加载更多和清空搜索后的刷新也会保持同一筛选范围。
+
 ## [2.7.0+2] - 2026-07-04
 
 ### Added

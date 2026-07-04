@@ -1168,6 +1168,19 @@
             return filters.tagIds.length > 0 || filters.includeUntagged || getAccountMailAccessStatusFilter() !== 'all';
         }
 
+        function shouldUseAllGroupsForAccountStatusFilter() {
+            return (
+                !isTempEmailGroup
+                && !isMailSearchMode()
+                && getAccountSearchScope() === 'all'
+                && getAccountMailAccessStatusFilter() !== 'all'
+            );
+        }
+
+        function getAccountListRequestGroupId() {
+            return shouldUseAllGroupsForAccountStatusFilter() ? null : (currentGroupId || null);
+        }
+
         function loadAccountTagFilterPreference() {
             try {
                 const storedValue = localStorage.getItem(ACCOUNT_TAG_FILTER_STORAGE_KEY);
@@ -1404,8 +1417,8 @@
         function handleAccountSearchScopeChange(value) {
             setAccountSearchScope(value);
             const searchQuery = getAccountSearchQuery();
-            if (searchQuery && !isTempEmailGroup) {
-                searchAccounts(searchQuery, true);
+            if (!isTempEmailGroup && (searchQuery || getAccountMailAccessStatusFilter() !== 'all')) {
+                refreshVisibleAccountList(true);
             }
         }
 
@@ -1535,23 +1548,28 @@
             const searchQuery = (document.getElementById('globalSearch')?.value || '').trim();
             if (searchQuery) {
                 await searchAccounts(searchQuery, false, true);
-            } else if (currentGroupId && !isTempEmailGroup) {
-                await loadAccountsByGroup(currentGroupId, false, true);
+            } else if (!isTempEmailGroup) {
+                const groupId = getAccountListRequestGroupId();
+                if (groupId !== null || shouldUseAllGroupsForAccountStatusFilter()) {
+                    await loadAccountsByGroup(groupId, false, true);
+                }
             }
         }
 
         // 加载分组下的账号
         async function loadAccountsByGroup(groupId, forceRefresh = false, append = false) {
             const container = document.getElementById('accountList');
+            const isAllGroupsRequest = groupId === null || groupId === undefined || groupId === '';
+            const cacheKey = isAllGroupsRequest ? '__all_groups__' : String(groupId);
             const cacheAllowed = !hasAccountServerSideFilters();
 
             // 如果有缓存且不强制刷新，直接使用缓存
-            if (!append && !forceRefresh && cacheAllowed && accountsCache[groupId]) {
-                updateAccountPaginationState('group', String(groupId), {
-                    total: accountsCache[groupId].length,
+            if (!append && !forceRefresh && cacheAllowed && accountsCache[cacheKey]) {
+                updateAccountPaginationState(isAllGroupsRequest ? 'all-groups' : 'group', cacheKey, {
+                    total: accountsCache[cacheKey].length,
                     has_more: false
-                }, accountsCache[groupId].length);
-                renderFilteredAccountList(accountsCache[groupId]);
+                }, accountsCache[cacheKey].length);
+                renderFilteredAccountList(accountsCache[cacheKey]);
                 return;
             }
 
@@ -1563,9 +1581,11 @@
             }
 
             const params = appendAccountListParams(new URLSearchParams({
-                group_id: String(groupId),
                 offset: String(offset)
             }));
+            if (!isAllGroupsRequest) {
+                params.set('group_id', String(groupId));
+            }
             const requestId = ++accountListRequestSeq;
 
             try {
@@ -1580,17 +1600,17 @@
                         ? currentAccountListSource.concat(data.accounts || [])
                         : (data.accounts || []);
                     if (cacheAllowed && !data.has_more && nextAccounts.length <= getAccountPageSize()) {
-                        accountsCache[groupId] = nextAccounts;
+                        accountsCache[cacheKey] = nextAccounts;
                     } else if (!append) {
-                        delete accountsCache[groupId];
+                        delete accountsCache[cacheKey];
                     } else if (nextAccounts.length > getAccountPageSize()) {
-                        delete accountsCache[groupId];
+                        delete accountsCache[cacheKey];
                     }
-                    updateAccountPaginationState('group', String(groupId), data, nextAccounts.length);
+                    updateAccountPaginationState(isAllGroupsRequest ? 'all-groups' : 'group', cacheKey, data, nextAccounts.length);
                     renderFilteredAccountList(nextAccounts);
                 } else {
                     container.innerHTML = renderEmptyStateMarkup('⚠️', data.error || '加载失败', {
-                        onAction: `loadAccountsByGroup(${Number(groupId)}, true)`,
+                        onAction: isAllGroupsRequest ? 'refreshVisibleAccountList(true)' : `loadAccountsByGroup(${Number(groupId)}, true)`,
                         actionTitle: '刷新账号列表'
                     });
                 }
@@ -1599,7 +1619,7 @@
                     showToast('加载更多账号失败', 'error');
                 } else {
                     container.innerHTML = renderEmptyStateMarkup('⚠️', '加载失败', {
-                        onAction: `loadAccountsByGroup(${Number(groupId)}, true)`,
+                        onAction: isAllGroupsRequest ? 'refreshVisibleAccountList(true)' : `loadAccountsByGroup(${Number(groupId)}, true)`,
                         actionTitle: '刷新账号列表'
                     });
                 }
@@ -1763,14 +1783,17 @@
         function renderAccountList(accounts) {
             const container = document.getElementById('accountList');
             const isSearchMode = !!(document.getElementById('globalSearch')?.value || '').trim();
-            const showSearchGroupInfo = isSearchMode && getAccountSearchScope() === 'all';
+            const isAllGroupsAccountList = accountPaginationState.mode === 'all-groups';
+            const showSearchGroupInfo = (isSearchMode && getAccountSearchScope() === 'all') || isAllGroupsAccountList;
             const normalizedGroupId = Number(currentGroupId);
-            const refreshAction = Number.isFinite(normalizedGroupId) && normalizedGroupId > 0
+            const refreshAction = isAllGroupsAccountList
+                ? 'refreshVisibleAccountList(true)'
+                : Number.isFinite(normalizedGroupId) && normalizedGroupId > 0
                 ? `loadAccountsByGroup(${normalizedGroupId}, true)`
                 : '';
 
             if (accounts.length === 0) {
-                container.innerHTML = isSearchMode
+                container.innerHTML = isSearchMode || isAllGroupsAccountList
                     ? renderEmptyStateMarkup('📭', '未找到匹配邮箱')
                     : renderEmptyStateMarkup('📭', '该分组暂无邮箱', {
                         onAction: refreshAction,
@@ -2017,6 +2040,9 @@
                 } else {
                     updateCurrentGroupHeader(null, `搜索结果 (${filteredAccounts.length}/${total})`);
                 }
+            } else if (accountPaginationState.mode === 'all-groups') {
+                const total = Number(accountPaginationState.total) || filteredAccounts.length;
+                updateCurrentGroupHeader(null, `所有分组 (${filteredAccounts.length}/${total})`);
             } else {
                 const currentGroup = groups.find(group => group.id === currentGroupId);
                 if (currentGroup && Number(accountPaginationState.total) > 0) {
@@ -2351,8 +2377,11 @@
             if (currentGroupId && isTempEmailGroup) {
                 return loadTempEmails(forceRefresh);
             }
-            if (currentGroupId) {
-                return loadAccountsByGroup(currentGroupId, forceRefresh);
+            if (!isTempEmailGroup) {
+                const groupId = getAccountListRequestGroupId();
+                if (groupId !== null || shouldUseAllGroupsForAccountStatusFilter()) {
+                    return loadAccountsByGroup(groupId, forceRefresh);
+                }
             }
             return Promise.resolve();
         }
@@ -2538,8 +2567,9 @@
             }
 
             if (!query.trim()) {
+                const useAllGroups = shouldUseAllGroupsForAccountStatusFilter();
                 const currentGroup = groups.find(group => group.id === currentGroupId);
-                updateCurrentGroupHeader(currentGroup);
+                updateCurrentGroupHeader(useAllGroups ? null : currentGroup, useAllGroups ? '所有分组' : undefined);
                 currentAccountListSource = [];
                 accountPaginationState = {
                     mode: '',
@@ -2552,7 +2582,10 @@
                 if (isTempEmailGroup) {
                     loadTempEmails();
                 } else {
-                    loadAccountsByGroup(currentGroupId, forceRefresh);
+                    const groupId = getAccountListRequestGroupId();
+                    if (groupId !== null || useAllGroups) {
+                        loadAccountsByGroup(groupId, forceRefresh);
+                    }
                 }
                 return;
             }
