@@ -1,4 +1,4 @@
-        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, clearEmailSelection, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, hideNewMailNotice, isMobileLayout, isTempEmailGroup, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmailList, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setMailSyncStatus, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showEmailList, showGetRefreshTokenModal, showMailAccessError, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateEmailListHeader, updateMobileContext */
+        /* global ACCOUNT_LIST_DEFAULT_PAGE_SIZE, ACCOUNT_LIST_MAX_PAGE_SIZE, accountListPageSize, accountListRequestSeq, accountPaginationState, accountSelectionMode, accountsCache, clearEmailSelection, closeAllModals, currentAccount, currentAccountListSource, currentEmailDetail, currentEmailId, currentEmails, currentFolder, currentGroupId, currentMethod, currentSkip, currentSortBy, currentSortOrder, deleteAccount, editingGroupId, escapeHtml, formatAbsoluteDateTime, generateTempEmail, groups, handleAccountRowSelectionClick, handleAccountSelectionCheckboxClick, handleApiError, hasMoreEmails, hideModal, hideNewMailNotice, isMobileLayout, isTempEmailGroup, loadCloudflareChannelsForImport, loadTempEmails, localStorage, matchesSelectedTagFilters, normalizeTagFilterSelectionValue, openMobilePanel, renderEmailList, renderEmptyStateMarkup, renderTempEmailList, resetSelectedAccountView, selectedColor, selectedTagFilters, setMailSyncStatus, setModalVisible, shouldShowAccountCreatedAt, shouldShowAccountSortOrder, showAddAccountModal, showEmailList, showGetRefreshTokenModal, showMailAccessError, showModal, showRefreshError, showTagManagementModal, showToast, suppressGroupClickUntil, tempEmailGroupId, toggleAccountSelectionMode, updateCurrentGroupHeader, updateEmailListHeader, updateMobileContext */
 
         // ==================== 分组相关 ====================
 
@@ -16,6 +16,9 @@
             hasMore: false,
             loading: false
         };
+        const ACCOUNT_SEARCH_QUERY_STORAGE_KEY = 'outlook_account_search_query';
+        const ACCOUNT_SORT_STORAGE_KEY = 'outlook_account_sort';
+        const ACCOUNT_TAG_FILTER_STORAGE_KEY = 'outlook_account_tag_filters';
         const GROUP_COLLAPSED_STORAGE_PREFIX = 'outlook_group_collapsed_';
         let groupTree = [];
 
@@ -949,11 +952,6 @@
             currentGroupId = groupId;
             localStorage.setItem('outlook_last_group_id', groupId);
 
-            // 清空搜索框
-            const searchInput = document.getElementById('globalSearch');
-            if (searchInput) {
-                searchInput.value = '';
-            }
             resetMailSearchState({ clearResults: true });
 
             // 检查是否是临时邮箱分组
@@ -1010,7 +1008,12 @@
             if (isTempEmailGroup) {
                 await loadTempEmails();
             } else {
-                await loadAccountsByGroup(groupId);
+                const searchQuery = getAccountSearchQuery();
+                if (searchQuery) {
+                    await searchAccounts(searchQuery);
+                } else {
+                    await loadAccountsByGroup(groupId);
+                }
             }
 
             if (shouldAdvanceToAccounts) {
@@ -1026,7 +1029,25 @@
             return `
                 <button class="panel-action-btn account-selection-mode-btn${activeClass}" id="accountSelectionModeBtn"
                         onclick="toggleAccountSelectionMode()" title="${title}" aria-pressed="${accountSelectionMode ? 'true' : 'false'}">
-                    ☑
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="2" width="12" height="12" rx="2"></rect>
+                        <path d="M5 8l2 2 4-4"></path>
+                    </svg>
+                </button>
+            `;
+        }
+
+        function renderAccountMinimalModeButton() {
+            const isMinimal = localStorage.getItem('outlook_account_list_minimal') === 'true';
+            const activeClass = isMinimal ? ' active' : '';
+            const title = isMinimal ? '切换详细展示' : '切换极简展示';
+            return `
+                <button class="panel-action-btn${activeClass}" id="accountMinimalBtn" onclick="toggleAccountMinimalMode()" title="${title}" aria-pressed="${isMinimal ? 'true' : 'false'}">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="2.5" width="12" height="2.5" rx="0.5"></rect>
+                        <rect x="2" y="6.75" width="12" height="2.5" rx="0.5"></rect>
+                        <rect x="2" y="11" width="12" height="2.5" rx="0.5"></rect>
+                    </svg>
                 </button>
             `;
         }
@@ -1039,10 +1060,16 @@
                 actions.innerHTML = `
                     ${renderAccountSelectionModeButton()}
                     <button class="panel-action-btn" onclick="showTagManagementModal()" title="管理标签">
-                        🏷️
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M7 1.5h6v6L6.5 14 2 9.5 7 1.5z"></path>
+                            <circle cx="9.5" cy="5" r="1.2" fill="currentColor"></circle>
+                        </svg>
                     </button>
+                    ${renderAccountMinimalModeButton()}
                     <button class="panel-action-btn panel-action-btn-accent" onclick="generateTempEmail()" title="生成临时邮箱">
-                        ⚡
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <polygon points="9 1 2 9 8 9 7 15 14 7 8 7 9 1"></polygon>
+                        </svg>
                     </button>
                     <button class="panel-action-btn panel-action-btn-primary" onclick="showAddAccountModal()" title="导入邮箱账号">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -1069,10 +1096,17 @@
                 actions.innerHTML = `
                     ${renderAccountSelectionModeButton()}
                     <button class="panel-action-btn" onclick="showTagManagementModal()" title="管理标签">
-                        🏷️
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M7 1.5h6v6L6.5 14 2 9.5 7 1.5z"></path>
+                            <circle cx="9.5" cy="5" r="1.2" fill="currentColor"></circle>
+                        </svg>
                     </button>
+                    ${renderAccountMinimalModeButton()}
                     <button class="panel-action-btn panel-action-btn-accent" onclick="showGetRefreshTokenModal()" title="授权并保存 Outlook 账号">
-                        🔑
+                        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <circle cx="5.5" cy="10.5" r="3.5"></circle>
+                            <path d="M8 8l5-5M13 3h2v2M11 5h2v2"></path>
+                        </svg>
                     </button>
                     <button class="panel-action-btn panel-action-btn-primary" onclick="showAddAccountModal()" title="导入邮箱账号">
                         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -1087,6 +1121,7 @@
                 document.getElementById('accountPageSizeContainer').style.display = 'flex';
                 syncAccountSearchScopeVisibility();
                 syncAccountPageSizeSelect();
+                syncAccountSortButtons();
                 updateTagFilter();
                 if (searchInput) {
                     searchInput.placeholder = '邮箱|别名|备注|标签';
@@ -1130,6 +1165,32 @@
             const filters = getAccountTagFilterParams();
             return filters.tagIds.length > 0 || filters.includeUntagged || getAccountMailAccessStatusFilter() !== 'all';
         }
+
+        function loadAccountTagFilterPreference() {
+            try {
+                const storedValue = localStorage.getItem(ACCOUNT_TAG_FILTER_STORAGE_KEY);
+                const values = storedValue ? JSON.parse(storedValue) : [];
+                if (!Array.isArray(values)) {
+                    return new Set();
+                }
+                return new Set(
+                    values
+                        .map(value => normalizeTagFilterSelectionValue(value))
+                        .filter(value => value !== null)
+                );
+            } catch (error) {
+                return new Set();
+            }
+        }
+
+        function saveAccountTagFilterPreference() {
+            const values = Array.from(selectedTagFilters || [])
+                .map(value => normalizeTagFilterSelectionValue(value))
+                .filter(value => value !== null);
+            localStorage.setItem(ACCOUNT_TAG_FILTER_STORAGE_KEY, JSON.stringify(Array.from(new Set(values))));
+        }
+
+        selectedTagFilters = loadAccountTagFilterPreference();
 
         function normalizeAccountPageSize(value) {
             const parsed = parseInt(value, 10);
@@ -1175,13 +1236,49 @@
                 : 'all';
         }
 
+        function getAccountSearchQuery() {
+            return (document.getElementById('globalSearch')?.value || '').trim();
+        }
+
+        function saveAccountSearchQueryPreference(value) {
+            const query = String(value || '');
+            if (query.trim()) {
+                localStorage.setItem(ACCOUNT_SEARCH_QUERY_STORAGE_KEY, query);
+            } else {
+                localStorage.removeItem(ACCOUNT_SEARCH_QUERY_STORAGE_KEY);
+            }
+        }
+
+        function initAccountSearchInput() {
+            const input = document.getElementById('globalSearch');
+            if (!input) {
+                return;
+            }
+            const savedQuery = localStorage.getItem(ACCOUNT_SEARCH_QUERY_STORAGE_KEY);
+            if (savedQuery !== null) {
+                input.value = savedQuery;
+            }
+        }
+
+        function setAccountSearchScope(value, persist = true) {
+            const normalizedScope = value === 'all' ? 'all' : 'group';
+            const select = document.getElementById('accountSearchScopeSelect');
+            if (select) {
+                select.value = normalizedScope;
+            }
+            if (persist) {
+                localStorage.setItem('outlook_account_search_scope', normalizedScope);
+            }
+            return normalizedScope;
+        }
+
         function initAccountSearchScopeSelect() {
             const select = document.getElementById('accountSearchScopeSelect');
             if (!select) {
                 return;
             }
             const savedScope = localStorage.getItem('outlook_account_search_scope');
-            select.value = savedScope === 'group' ? 'group' : 'all';
+            select.value = savedScope === 'all' ? 'all' : 'group';
         }
 
         function getAccountMailAccessStatusFilter() {
@@ -1303,9 +1400,8 @@
         }
 
         function handleAccountSearchScopeChange(value) {
-            const normalizedScope = value === 'group' ? 'group' : 'all';
-            localStorage.setItem('outlook_account_search_scope', normalizedScope);
-            const searchQuery = (document.getElementById('globalSearch')?.value || '').trim();
+            setAccountSearchScope(value);
+            const searchQuery = getAccountSearchQuery();
             if (searchQuery && !isTempEmailGroup) {
                 searchAccounts(searchQuery, true);
             }
@@ -1556,14 +1652,16 @@
             return '';
         }
 
-        function renderAccountTagSummary(tags) {
+        function renderAccountTagSummary(tags, accountId) {
             const safeTags = Array.isArray(tags) ? tags : [];
             const visibleTags = safeTags.slice(0, 2);
             const hiddenCount = Math.max(0, safeTags.length - visibleTags.length);
+            const canRemoveTags = Number.isFinite(Number(accountId)) && Number(accountId) > 0;
 
             let html = visibleTags.map(tag => `
                 <span class="account-status-pill tag" style="--pill-accent: ${tag.color}">
                     ${escapeHtml(tag.name)}
+                    ${canRemoveTags ? `<span class="tag-delete-btn" onclick="handleRemoveAccountTag(event, ${Number(accountId)}, ${Number(tag.id)}, '${escapeHtml(tag.name)}')">&times;</span>` : ''}
                 </span>
             `).join('');
 
@@ -1572,6 +1670,41 @@
             }
 
             return html;
+        }
+
+        async function handleRemoveAccountTag(event, accountId, tagId, tagName) {
+            if (event) {
+                event.stopPropagation();
+                event.preventDefault();
+            }
+            if (!(await showConfirmModal(`确定要从该邮箱移除标签 "${tagName}" 吗？`, { title: '移除标签', confirmText: '确认移除', danger: true }))) {
+                return;
+            }
+            try {
+                const response = await fetch('/api/accounts/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        account_ids: [accountId],
+                        tag_id: tagId,
+                        action: 'remove'
+                    })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showToast('标签已成功移除', 'success');
+                    if (typeof invalidateAccountCaches === 'function') {
+                        invalidateAccountCaches();
+                    }
+                    if (typeof refreshVisibleAccountList === 'function') {
+                        refreshVisibleAccountList(true);
+                    }
+                } else {
+                    handleApiError(data, '移除标签失败');
+                }
+            } catch (error) {
+                showToast('移除标签失败: ' + error.message, 'error');
+            }
         }
 
         function renderAccountAliasSummary(aliases) {
@@ -1681,15 +1814,17 @@
                         ${renderAccountGroupSummary(acc, showSearchGroupInfo)}
                         ${renderAccountAliasSummary(acc.aliases)}
                         ${acc.remark && acc.remark.trim() ? `<div class="account-remark" title="${escapeHtml(acc.remark)}">${escapeHtml(acc.remark)}</div>` : ''}
-                        ${(acc.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(acc.tags)}</div>` : ''}
+                        ${(acc.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(acc.tags, acc.id)}</div>` : ''}
                         ${renderAccountFooter(acc)}
                     </div>
                     <div class="account-menu-wrap">
                         <button class="account-menu-trigger" type="button" data-account-menu-toggle="true" title="更多操作">⋯</button>
                         <div class="account-menu-panel">
                             <button class="account-action-btn" type="button" data-account-action="copy" data-account-email="${escapeHtml(acc.email)}">复制邮箱</button>
+                            <button class="account-action-btn" type="button" data-account-action="share" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">分享邮箱</button>
                             <button class="account-action-btn" type="button" data-account-action="forwardingLogs" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">转发日志</button>
                             <button class="account-action-btn" type="button" data-account-action="toggleStatus" data-account-id="${acc.id}" data-account-status="${escapeHtml(acc.status || 'active')}">${acc.status === 'inactive' ? '启用账号' : '停用账号'}</button>
+                            ${(acc.account_type || 'outlook') !== 'imap' ? `<button class="account-action-btn" type="button" data-account-action="outlookAutoAuth" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">加入自动授权</button>` : ''}
                             <button class="account-action-btn" type="button" data-account-action="edit" data-account-id="${acc.id}">编辑账号</button>
                             <button class="account-action-btn delete" type="button" data-account-action="delete" data-account-id="${acc.id}" data-account-email="${escapeHtml(acc.email)}">删除账号</button>
                         </div>
@@ -1706,13 +1841,72 @@
         }
 
         // 排序相关变量
+        const ACCOUNT_SORT_DEFAULT_BY = 'sort_order';
         const ACCOUNT_SORT_DEFAULT_ORDERS = {
             sort_order: 'asc',
             created_at: 'desc',
             email: 'asc'
         };
-        let currentSortBy = 'sort_order';
-        let currentSortOrder = ACCOUNT_SORT_DEFAULT_ORDERS[currentSortBy];
+
+        function normalizeAccountSortBy(value) {
+            const candidate = String(value || '').trim();
+            return Object.prototype.hasOwnProperty.call(ACCOUNT_SORT_DEFAULT_ORDERS, candidate)
+                ? candidate
+                : ACCOUNT_SORT_DEFAULT_BY;
+        }
+
+        function normalizeAccountSortOrder(value, sortBy = ACCOUNT_SORT_DEFAULT_BY) {
+            if (value === 'asc' || value === 'desc') {
+                return value;
+            }
+            return ACCOUNT_SORT_DEFAULT_ORDERS[normalizeAccountSortBy(sortBy)] || 'asc';
+        }
+
+        function loadAccountSortPreference() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(ACCOUNT_SORT_STORAGE_KEY) || '{}');
+                const by = normalizeAccountSortBy(saved?.by);
+                return {
+                    by,
+                    order: normalizeAccountSortOrder(saved?.order, by)
+                };
+            } catch (error) {
+                return {
+                    by: ACCOUNT_SORT_DEFAULT_BY,
+                    order: ACCOUNT_SORT_DEFAULT_ORDERS[ACCOUNT_SORT_DEFAULT_BY]
+                };
+            }
+        }
+
+        function saveAccountSortPreference() {
+            currentSortBy = normalizeAccountSortBy(currentSortBy);
+            currentSortOrder = normalizeAccountSortOrder(currentSortOrder, currentSortBy);
+            localStorage.setItem(ACCOUNT_SORT_STORAGE_KEY, JSON.stringify({
+                by: currentSortBy,
+                order: currentSortOrder
+            }));
+        }
+
+        function syncAccountSortButtons() {
+            document.querySelectorAll('.sort-btn').forEach(btn => {
+                btn.classList.remove('active');
+                btn.style.backgroundColor = '#ffffff';
+                btn.style.color = '#666';
+                btn.style.borderColor = '#e5e5e5';
+            });
+
+            const activeBtn = document.querySelector(`[data-sort="${currentSortBy}"]`);
+            if (activeBtn) {
+                activeBtn.classList.add('active');
+                activeBtn.style.backgroundColor = '#1a1a1a';
+                activeBtn.style.color = '#ffffff';
+                activeBtn.style.borderColor = '#1a1a1a';
+            }
+        }
+
+        const savedAccountSort = loadAccountSortPreference();
+        let currentSortBy = savedAccountSort.by;
+        let currentSortOrder = savedAccountSort.order;
         let suppressGroupClickUntil = 0;
         function createGroupDragState() {
             return {
@@ -1783,6 +1977,7 @@
 
         // 排序账号列表
         function sortAccounts(sortBy) {
+            sortBy = normalizeAccountSortBy(sortBy);
             // 如果点击同一个排序按钮，切换排序顺序
             if (currentSortBy === sortBy) {
                 currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
@@ -1791,21 +1986,8 @@
                 currentSortOrder = ACCOUNT_SORT_DEFAULT_ORDERS[sortBy] || 'asc';
             }
 
-            // 更新按钮状态
-            document.querySelectorAll('.sort-btn').forEach(btn => {
-                btn.classList.remove('active');
-                btn.style.backgroundColor = '#ffffff';
-                btn.style.color = '#666';
-                btn.style.borderColor = '#e5e5e5';
-            });
-
-            const activeBtn = document.querySelector(`[data-sort="${sortBy}"]`);
-            if (activeBtn) {
-                activeBtn.classList.add('active');
-                activeBtn.style.backgroundColor = '#1a1a1a';
-                activeBtn.style.color = '#ffffff';
-                activeBtn.style.borderColor = '#1a1a1a';
-            }
+            saveAccountSortPreference();
+            syncAccountSortButtons();
 
             invalidateAccountCaches();
             if (isTempEmailGroup) {
@@ -1907,7 +2089,7 @@
                             ${renderAccountGroupSummary(account, true)}
                             ${renderAccountAliasSummary(account.aliases)}
                             ${account.remark && account.remark.trim() ? `<div class="account-remark" title="${escapeHtml(account.remark)}">${escapeHtml(account.remark)}</div>` : ''}
-                            ${(account.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(account.tags)}</div>` : ''}
+                            ${(account.tags || []).length ? `<div class="account-tags">${renderAccountTagSummary(account.tags, accountId)}</div>` : ''}
                             ${renderAccountFooter(account)}
                         </div>
                         <div class="account-menu-wrap">
@@ -2303,13 +2485,16 @@
 
         // Tag Filter Change Handler
         function handleTagFilterChange() {
-            const selected = document.querySelectorAll('.tag-filter-checkbox:checked');
+            const dropdown = document.getElementById('tagFilterDropdown');
+            const selected = dropdown ? dropdown.querySelectorAll('.tag-filter-checkbox:checked') : document.querySelectorAll('.tag-filter-checkbox:checked');
             selectedTagFilters = new Set(
                 Array.from(selected)
                     .map(cb => normalizeTagFilterSelectionValue(cb.value))
                     .filter(value => value !== null)
             );
-            document.querySelectorAll('.tag-filter-option').forEach(option => {
+            saveAccountTagFilterPreference();
+            const optionScope = dropdown || document;
+            optionScope.querySelectorAll('.tag-filter-option').forEach(option => {
                 const checkbox = option.querySelector('.tag-filter-checkbox');
                 option.classList.toggle('is-checked', !!checkbox?.checked);
             });
@@ -2342,6 +2527,9 @@
         // 全局搜索函数
         async function searchAccounts(query, forceRefresh = false, append = false) {
             const container = document.getElementById('accountList');
+            if (!append) {
+                saveAccountSearchQueryPreference(query);
+            }
 
             if (isMailSearchMode()) {
                 return searchMailContents(query, forceRefresh, append);
@@ -2659,9 +2847,13 @@
             const inputEl = document.getElementById('accountInput');
             const channelGroup = document.getElementById('importChannelGroup');
             const channelSelect = document.getElementById('importChannelSelect');
+            const cloudflareChannelGroup = document.getElementById('importCloudflareChannelGroup');
+            const cloudflareModeGroup = document.getElementById('importCloudflareModeGroup');
+            const cloudflareModeSelect = document.getElementById('importCloudflareImportMode');
             const providerGroup = document.getElementById('importProviderGroup');
             const providerSelect = document.getElementById('importProviderSelect');
             const exampleEl = document.getElementById('importFormatExample');
+            const importSource = document.querySelector('#addAccountModal .import-account-source');
             const customImapSettings = document.getElementById('customImapSettings');
             const customHost = document.getElementById('importImapHost');
             const customPort = document.getElementById('importImapPort');
@@ -2671,14 +2863,27 @@
             const isTempGroup = isTempImportGroup();
             if (channelGroup) channelGroup.style.display = isTempGroup ? '' : 'none';
             if (providerGroup) providerGroup.style.display = isTempGroup ? 'none' : '';
+            if (!isTempGroup) {
+                if (cloudflareChannelGroup) cloudflareChannelGroup.style.display = 'none';
+                if (cloudflareModeGroup) cloudflareModeGroup.style.display = 'none';
+                if (importSource) importSource.style.display = '';
+            }
             accountDefaultFields.forEach(field => {
-                const isTagField = !!field.querySelector('#importTagDropdown');
+                const isTagField = !!field.querySelector('#importTagFilterDropdown');
                 field.style.display = isTempGroup ? (isTagField ? '' : 'none') : '';
             });
 
             if (isTempGroup) {
                 if (customImapSettings) customImapSettings.style.display = 'none';
                 const channel = channelSelect ? channelSelect.value : 'gptmail';
+                const isCloudflare = channel === 'cloudflare';
+                const cloudflareMode = cloudflareModeSelect ? cloudflareModeSelect.value : 'auto';
+                if (cloudflareChannelGroup) cloudflareChannelGroup.style.display = isCloudflare ? '' : 'none';
+                if (cloudflareModeGroup) cloudflareModeGroup.style.display = isCloudflare ? '' : 'none';
+                if (importSource) importSource.style.display = isCloudflare && cloudflareMode === 'auto' ? 'none' : '';
+                if (isCloudflare && typeof loadCloudflareChannelsForImport === 'function') {
+                    loadCloudflareChannelsForImport();
+                }
                 if (channel === 'duckmail') {
                     hintEl.textContent = '格式：邮箱----密码，每行一个。';
                     inputEl.placeholder = '邮箱----密码';
@@ -2689,11 +2894,20 @@
                     return;
                 }
                 if (channel === 'cloudflare') {
-                    hintEl.textContent = '格式：邮箱----JWT。可用 [cloudflare:渠道名] 分段，或使用 邮箱----JWT----渠道名。';
-                    inputEl.placeholder = '[cloudflare:cfmail-us]\nuser@example.com----jwt\nuser2@example.com----jwt----cfmail-hk';
+                    if (cloudflareMode === 'auto') {
+                        hintEl.textContent = '自动从所选 Cloudflare 渠道拉取邮箱地址并导入，不拉取 JWT。';
+                        inputEl.placeholder = '';
+                        if (exampleEl) {
+                            exampleEl.style.display = 'none';
+                            exampleEl.textContent = '';
+                        }
+                        return;
+                    }
+                    hintEl.textContent = '格式：每行一个邮箱地址。手动导入不再支持 邮箱----JWT。';
+                    inputEl.placeholder = 'user@example.com\nuser2@example.com';
                     if (exampleEl) {
                         exampleEl.style.display = '';
-                        exampleEl.textContent = '示例：\n[cloudflare:cfmail-us]\nuser@example.com----eyJhbGciOi...\nuser2@example.com----eyJhbGciOi...----cfmail-hk';
+                        exampleEl.textContent = '示例：\nuser@example.com\nuser2@example.com';
                     }
                     return;
                 }

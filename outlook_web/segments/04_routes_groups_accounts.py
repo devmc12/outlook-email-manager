@@ -155,34 +155,47 @@ def favicon():
 @app.route('/assets/index.css')
 def bundled_index_css():
     """返回合并后的首页样式，避免代理层拦截 CSS @import 子请求。"""
-    css_root = Path(app.static_folder) / 'css' / 'index'
-    css_parts = (
-        '01-base.css',
-        '02-navbar.css',
-        '03-layout.css',
-        '04-account-panel.css',
-        '05-email-content.css',
-        '06-modals-toast.css',
-        '07-meta.css',
-        '08-responsive.css',
-    )
+    static_root = Path(app.static_folder)
 
     combined_css = '\n\n'.join(
-        (css_root / filename).read_text(encoding='utf-8')
-        for filename in css_parts
+        (static_root / filename).read_text(encoding='utf-8')
+        for filename in INDEX_CSS_FILES
     )
-    return Response(combined_css, mimetype='text/css')
+    response = Response(combined_css, mimetype='text/css')
+    response.headers['ETag'] = f'"index-{compute_static_assets_hash(INDEX_CSS_FILES)}"'
+    if request.args.get('v'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    else:
+        response.headers['Cache-Control'] = 'no-cache, max-age=0'
+    return response
+
+
+@app.route('/assets/active-skin.css')
+def active_skin_css():
+    """返回当前启用皮肤的 CSS；失败时回退为空 classic 覆盖。"""
+    css_text, asset_hash = get_active_skin_css()
+    response = Response(css_text, mimetype='text/css')
+    response.headers['Cache-Control'] = 'public, max-age=300'
+    response.headers['ETag'] = f'"skin-{asset_hash}"'
+    return response
 
 
 @app.route('/')
 @login_required
 def index():
     """主页"""
-    return render_template(
+    response = make_response(render_template(
         'index.html',
         app_version=APP_VERSION,
         changelog_url=CHANGELOG_URL,
-    )
+        frontend_asset_hash=get_frontend_asset_hash(),
+        skin_asset_hash=get_active_skin_asset_hash(),
+    ))
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    response.vary.add('Cookie')
+    return response
 
 
 @app.route('/api/version-status', methods=['GET'])
@@ -394,8 +407,7 @@ def append_temp_email_export_sections(lines: List[str], temp_emails: List[Dict[s
         for channel_name in sorted(grouped.keys(), key=str.lower):
             lines.append(f'[cloudflare:{channel_name}]')
             for te in grouped[channel_name]:
-                cloudflare_jwt = decrypt_data(te.get('cloudflare_jwt', '')) if te.get('cloudflare_jwt') else ''
-                lines.append(f"{te['email']}----{cloudflare_jwt}")
+                lines.append(te['email'])
                 exported_count += 1
 
     return exported_count
@@ -1288,7 +1300,8 @@ def api_get_account(account_id):
             'mail_access_checked_at': account.get('mail_access_checked_at') or '',
             'mail_access_source': account.get('mail_access_source') or '',
             'created_at': account.get('created_at', ''),
-            'updated_at': account.get('updated_at', '')
+            'updated_at': account.get('updated_at', ''),
+            'tags': get_account_tags(account['id'])
         }
     })
 
@@ -1496,6 +1509,8 @@ def api_update_account(account_id):
     ).strip()
     aliases_provided = 'aliases' in data
     aliases = parse_alias_payload(data.get('aliases', [])) if aliases_provided else []
+    tag_ids_provided = 'tag_ids' in data
+    normalized_tag_ids = normalize_tag_ids_input(data.get('tag_ids', [])) if tag_ids_provided else []
 
     provider_meta = get_provider_meta(provider, email_addr)
     is_outlook = (account_type == 'outlook') or provider_meta['key'] == 'outlook'
@@ -1534,13 +1549,20 @@ def api_update_account(account_id):
         proxy_url, fallback_proxy_url_1, fallback_proxy_url_2
     ):
         cleaned_aliases = get_account_aliases(account_id)
+        db = get_db()
         if aliases_provided:
-            db = get_db()
             alias_success, cleaned_aliases, alias_errors = replace_account_aliases(account_id, email_addr, aliases, db)
             if not alias_success:
                 db.rollback()
                 return jsonify({'success': False, 'error': '；'.join(alias_errors), 'errors': alias_errors})
-            db.commit()
+        if tag_ids_provided:
+            db.execute('DELETE FROM account_tags WHERE account_id = ?', (account_id,))
+            for tid in normalized_tag_ids:
+                db.execute(
+                    'INSERT OR IGNORE INTO account_tags (account_id, tag_id) VALUES (?, ?)',
+                    (account_id, tid)
+                )
+        db.commit()
         return jsonify({'success': True, 'message': '账号更新成功', 'aliases': cleaned_aliases})
     else:
         return jsonify({'success': False, 'error': '更新失败'})

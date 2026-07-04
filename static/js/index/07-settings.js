@@ -1,4 +1,4 @@
-        /* global accountsCache, allTags, closeAllModals, closeMobilePanels, closeNavbarActionsMenu, currentGroupId, currentGroupName, deleteCurrentAccount, ensureForwardingSettingsUI, escapeHtml, formatAbsoluteDateTime, getSelectedForwardChannels, groups, handleApiError, hideEditAccountModal, hideModal, hideSettingsModal, invalidateNormalMailRetentionCaches, isTempEmailGroup, isTempImportGroup, loadAccountsByGroup, loadGroups, loadTempEmails, normalizeSmtpForwardProvider, refreshVisibleAccountList, setAppTimeZone, setModalVisible, setSelectedForwardChannels, setShowAccountCreatedAt, setShowAccountSortOrder, setShowGroupId, setNormalMailLocalRetentionEnabled, setNormalMailLocalRetentionAutoShowNewMail, setVerificationCodeCopyEnabled, showConfirmModal, showModal, showToast, syncSmtpProviderUI, toggleRefreshStrategy, updateEditAccountFields, updateImportHint */
+        /* global accountsCache, allTags, closeAllModals, closeMobilePanels, closeNavbarActionsMenu, currentGroupId, currentGroupName, deleteCurrentAccount, ensureForwardingSettingsUI, escapeHtml, formatAbsoluteDateTime, getSelectedForwardChannels, groups, handleApiError, hideEditAccountModal, hideModal, hideSettingsModal, invalidateNormalMailRetentionCaches, isTempEmailGroup, isTempImportGroup, loadAccountsByGroup, loadCloudflareChannelsForTempEmails, loadGroups, loadTempEmails, normalizeSmtpForwardProvider, refreshVisibleAccountList, setAppTimeZone, setModalVisible, setSelectedForwardChannels, setShowAccountCreatedAt, setShowAccountSortOrder, setShowGroupId, setNormalMailLocalRetentionAutoShowNewMail, setNormalMailLocalRetentionEnabled, setVerificationCodeCopyEnabled, showConfirmModal, showModal, showToast, syncSmtpProviderUI, toggleRefreshStrategy, updateEditAccountFields, updateImportHint */
 
         // ==================== 设置相关 ====================
         let settingsScrollSyncBound = false;
@@ -6,6 +6,7 @@
         let lastLoadedWebdavBackupSettings = null;
         let cloudflareSettingsChannels = [];
         let lastNormalMailRetentionStatus = null;
+        let lastLoadedSkinSettings = null;
         let normalMailRetentionStatusPollTimer = null;
         let normalMailRetentionStatusPollDelayMs = 0;
         const NORMAL_MAIL_RETENTION_STATUS_INITIAL_POLL_MS = 2000;
@@ -18,6 +19,21 @@
 
         function parseSettingsBoolean(value) {
             return String(value).toLowerCase() === 'true';
+        }
+
+        function syncForwardExecutionModeUI() {
+            const modeEl = document.getElementById('forwardExecutionMode');
+            const workersEl = document.getElementById('forwardParallelWorkers');
+            const delayEl = document.getElementById('forwardAccountDelaySeconds');
+            if (!modeEl || !workersEl) return;
+            const isParallel = modeEl.value === 'parallel';
+            workersEl.disabled = !isParallel;
+            if (delayEl) {
+                delayEl.disabled = isParallel;
+                if (isParallel) {
+                    delayEl.value = '0';
+                }
+            }
         }
 
         function formatStorageBytes(bytes) {
@@ -302,6 +318,7 @@
             scrollSettingsSection('settingsGeneralSection');
             populateTimeZoneOptions(getAppTimeZone());
             await loadSettings();
+            await loadSkinSettings();
             scheduleSettingsSidebarSync();
         }
 
@@ -316,6 +333,247 @@
             const backupVerifyInput = document.getElementById('webdavBackupVerifyPassword');
             if (backupVerifyInput) {
                 backupVerifyInput.value = '';
+            }
+        }
+
+        function setSkinSettingsStatus(message, type = '') {
+            const statusEl = document.getElementById('settingsSkinStatus');
+            if (!statusEl) return;
+            statusEl.textContent = message || '';
+            statusEl.style.display = message ? 'block' : 'none';
+            statusEl.dataset.type = type || '';
+        }
+
+        function refreshActiveSkinStylesheet(assetHash) {
+            const link = document.getElementById('activeSkinStylesheet');
+            if (!link) return;
+            const version = encodeURIComponent(assetHash || String(Date.now()));
+            link.href = `/assets/active-skin.css?v=${version}`;
+        }
+
+        function formatSkinSourceLabel(sourceType) {
+            if (sourceType === 'builtin') return '内置';
+            if (sourceType === 'upload') return '上传';
+            if (sourceType === 'git') return 'Git';
+            return sourceType || '未知';
+        }
+
+        function renderSkinList(payload = {}) {
+            lastLoadedSkinSettings = payload || {};
+            const listEl = document.getElementById('settingsSkinList');
+            const summaryEl = document.getElementById('settingsSkinActiveSummary');
+            if (!listEl || !summaryEl) return;
+
+            const activeSkin = payload.active_skin || {};
+            const activeName = activeSkin.name || activeSkin.id || 'classic';
+            summaryEl.textContent = `${activeName}（${activeSkin.id || 'classic'}）`;
+
+            const skins = Array.isArray(payload.skins) ? payload.skins : [];
+            if (!skins.length) {
+                listEl.innerHTML = '<div class="settings-note">没有可用皮肤。</div>';
+                return;
+            }
+
+            listEl.innerHTML = skins.map(skin => {
+                const skinId = String(skin.id || '').trim();
+                const isActive = !!skin.active;
+                const isInvalid = skin.status && skin.status !== 'ok';
+                const sourceType = String(skin.source_type || '');
+                const escapedId = escapeHtml(skinId);
+                const name = escapeHtml(skin.name || skinId);
+                const version = escapeHtml(skin.version || '-');
+                const sourceLabel = escapeHtml(formatSkinSourceLabel(sourceType));
+                const description = escapeHtml(skin.description || '');
+                const error = escapeHtml(skin.last_error || '');
+                const gitMeta = sourceType === 'git' && skin.git_url
+                    ? `<span>${escapeHtml(skin.git_url)}${skin.git_ref ? ` @ ${escapeHtml(skin.git_ref)}` : ''}</span>`
+                    : '';
+                const activePill = isActive ? '<span class="skin-pill skin-pill--active">当前</span>' : '';
+                const invalidPill = isInvalid ? '<span class="skin-pill skin-pill--invalid">不可用</span>' : '';
+                const activateButton = isActive || isInvalid
+                    ? ''
+                    : `<button class="btn btn-sm btn-secondary" type="button" onclick="activateSkin('${skinId}')">启用</button>`;
+                const updateButton = sourceType === 'git'
+                    ? `<button class="btn btn-sm btn-secondary" type="button" onclick="updateGitSkin('${skinId}')">更新</button>`
+                    : '';
+                const deleteButton = !skin.builtin && !isActive
+                    ? `<button class="btn btn-sm btn-danger" type="button" onclick="deleteSkin('${skinId}')">删除</button>`
+                    : '';
+
+                return `
+                    <article class="skin-card ${isActive ? 'is-active' : ''} ${isInvalid ? 'is-invalid' : ''}">
+                        <div>
+                            <div class="skin-card__title">
+                                <span>${name}</span>
+                                ${activePill}
+                                ${invalidPill}
+                            </div>
+                            <div class="skin-card__meta">
+                                <span>ID：${escapedId}</span>
+                                <span>版本：${version}</span>
+                                <span>来源：${sourceLabel}</span>
+                                ${description ? `<span>${description}</span>` : ''}
+                                ${gitMeta}
+                            </div>
+                            ${error ? `<div class="skin-card__error">${error}</div>` : ''}
+                        </div>
+                        <div class="skin-card__actions">
+                            ${activateButton}
+                            ${updateButton}
+                            ${deleteButton}
+                        </div>
+                    </article>
+                `;
+            }).join('');
+        }
+
+        async function loadSkinSettings() {
+            const listEl = document.getElementById('settingsSkinList');
+            if (listEl) {
+                listEl.innerHTML = '<div class="settings-note">正在加载皮肤列表...</div>';
+            }
+            try {
+                const response = await fetch('/api/skins', { cache: 'no-store' });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '加载皮肤列表失败');
+                }
+                renderSkinList(data);
+                setSkinSettingsStatus('');
+                return data;
+            } catch (error) {
+                setSkinSettingsStatus(error.message || '加载皮肤列表失败', 'error');
+                if (listEl) {
+                    listEl.innerHTML = '<div class="settings-note">皮肤列表加载失败。</div>';
+                }
+                return null;
+            }
+        }
+
+        async function activateSkin(skinId) {
+            const normalizedId = String(skinId || '').trim();
+            if (!normalizedId) {
+                showToast('皮肤 ID 无效', 'error');
+                return;
+            }
+            try {
+                const response = await fetch(`/api/skins/${encodeURIComponent(normalizedId)}/activate`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '启用皮肤失败');
+                }
+                refreshActiveSkinStylesheet(data.asset_hash);
+                showToast('皮肤已启用', 'success');
+                await loadSkinSettings();
+            } catch (error) {
+                showToast(error.message || '启用皮肤失败', 'error');
+                setSkinSettingsStatus(error.message || '启用皮肤失败', 'error');
+            }
+        }
+
+        async function uploadSkinPackage() {
+            const input = document.getElementById('settingsSkinUploadFile');
+            const file = input?.files?.[0];
+            if (!file) {
+                showToast('请选择 zip 皮肤包', 'error');
+                return;
+            }
+            const formData = new FormData();
+            formData.append('skin', file);
+            setSkinSettingsStatus('正在安装上传皮肤...', 'pending');
+            try {
+                const response = await fetch('/api/skins/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '安装上传皮肤失败');
+                }
+                if (input) input.value = '';
+                showToast('皮肤已安装', 'success');
+                setSkinSettingsStatus('');
+                await loadSkinSettings();
+            } catch (error) {
+                showToast(error.message || '安装上传皮肤失败', 'error');
+                setSkinSettingsStatus(error.message || '安装上传皮肤失败', 'error');
+            }
+        }
+
+        async function installGitSkin() {
+            const gitUrl = document.getElementById('settingsSkinGitUrl')?.value.trim() || '';
+            const gitRef = document.getElementById('settingsSkinGitRef')?.value.trim() || '';
+            if (!gitUrl) {
+                showToast('请输入 Git 仓库地址', 'error');
+                return;
+            }
+            setSkinSettingsStatus('正在安装 Git 皮肤...', 'pending');
+            try {
+                const response = await fetch('/api/skins/git/install', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ git_url: gitUrl, git_ref: gitRef })
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '安装 Git 皮肤失败');
+                }
+                showToast('Git 皮肤已安装', 'success');
+                setSkinSettingsStatus('');
+                await loadSkinSettings();
+            } catch (error) {
+                showToast(error.message || '安装 Git 皮肤失败', 'error');
+                setSkinSettingsStatus(error.message || '安装 Git 皮肤失败', 'error');
+            }
+        }
+
+        async function updateGitSkin(skinId) {
+            const normalizedId = String(skinId || '').trim();
+            if (!normalizedId) return;
+            setSkinSettingsStatus('正在更新 Git 皮肤...', 'pending');
+            try {
+                const response = await fetch(`/api/skins/${encodeURIComponent(normalizedId)}/git/update`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '更新 Git 皮肤失败');
+                }
+                if (lastLoadedSkinSettings?.active_skin_id === normalizedId) {
+                    refreshActiveSkinStylesheet(data.skin?.asset_hash);
+                }
+                showToast('Git 皮肤已更新', 'success');
+                setSkinSettingsStatus('');
+                await loadSkinSettings();
+            } catch (error) {
+                showToast(error.message || '更新 Git 皮肤失败', 'error');
+                setSkinSettingsStatus(error.message || '更新 Git 皮肤失败', 'error');
+            }
+        }
+
+        async function deleteSkin(skinId) {
+            const normalizedId = String(skinId || '').trim();
+            if (!normalizedId) return;
+            const confirmed = await showConfirmModal(
+                '确定要删除这个自定义皮肤吗？',
+                { title: '删除皮肤', confirmText: '确认删除' }
+            );
+            if (!confirmed) return;
+            try {
+                const response = await fetch(`/api/skins/${encodeURIComponent(normalizedId)}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || '删除皮肤失败');
+                }
+                showToast('皮肤已删除', 'success');
+                await loadSkinSettings();
+            } catch (error) {
+                showToast(error.message || '删除皮肤失败', 'error');
+                setSkinSettingsStatus(error.message || '删除皮肤失败', 'error');
             }
         }
 
@@ -813,62 +1071,50 @@
         }
 
         function renderImportTagOptions() {
-            const container = document.getElementById('importTagOptions');
+            const container = document.getElementById('importTagFilterOptions');
             if (!container) return;
 
             const tags = typeof allTags !== 'undefined' && Array.isArray(allTags) ? allTags : [];
-            if (!tags.length) {
-                container.innerHTML = '<div class="import-tag-empty">暂无标签</div>';
-                updateImportTagSummary();
-                return;
-            }
-
-            container.innerHTML = tags.map(tag => `
-                <label class="import-tag-option">
-                    <input type="checkbox" class="import-tag-checkbox" value="${tag.id}" onchange="updateImportTagSummary()">
-                    <span class="import-tag-dot" style="background-color: ${escapeHtml(tag.color || '#9ca3af')};"></span>
-                    <span>${escapeHtml(tag.name || '')}</span>
-                </label>
-            `).join('');
+            container.innerHTML = buildTagFilterOptionsHtml(tags, [], 'updateImportTagSummary');
             updateImportTagSummary();
         }
 
         function updateImportTagSummary() {
-            const summaryEl = document.getElementById('importTagSummary');
-            const countEl = document.getElementById('importTagCount');
+            const summaryEl = document.getElementById('importTagFilterTriggerText');
+            const countEl = document.getElementById('importTagFilterTriggerCount');
             if (!summaryEl || !countEl) return;
 
-            const selected = Array.from(document.querySelectorAll('.import-tag-checkbox:checked'))
-                .map(checkbox => {
-                    const label = checkbox.closest('.import-tag-option');
-                    return label ? label.textContent.trim() : '';
-                })
-                .filter(Boolean);
-
-            if (!selected.length) {
-                summaryEl.textContent = '未选择标签';
-                countEl.style.display = 'none';
-                countEl.textContent = '';
-                return;
-            }
-
-            summaryEl.textContent = selected.length <= 2 ? selected.join('、') : `已选 ${selected.length} 个标签`;
-            countEl.style.display = 'inline-flex';
-            countEl.textContent = String(selected.length);
+            const container = document.getElementById('importTagFilterOptions');
+            const selectedIds = getTagFilterSelectedIds(container);
+            const tags = typeof allTags !== 'undefined' && Array.isArray(allTags) ? allTags : [];
+            const selectedItems = selectedIds.map(id => tags.find(t => t.id === id)).filter(Boolean);
+            updateTagFilterSummaryText(summaryEl, countEl, selectedItems, '未选择标签');
         }
 
         function toggleImportTagDropdown(event) {
             event?.stopPropagation();
-            const dropdown = document.getElementById('importTagDropdown');
-            if (!dropdown) return;
-            dropdown.classList.toggle('open');
+            const dropdown = document.getElementById('importTagFilterDropdown');
+            const searchInput = document.getElementById('importTagFilterSearchInput');
+            toggleTagFilterDropdownState(dropdown, searchInput, '');
+        }
+
+        function filterImportTagOptions(keyword) {
+            const container = document.getElementById('importTagFilterOptions');
+            filterTagFilterOptions(keyword, container);
+        }
+
+        function clearImportTagSelection(event) {
+            event?.stopPropagation();
+            const dropdown = document.getElementById('importTagFilterDropdown');
+            clearTagFilterCheckboxes(dropdown);
+            updateImportTagSummary();
         }
 
         function resetImportDefaults() {
             const remarkInput = document.getElementById('importRemark');
             const statusSelect = document.getElementById('importStatus');
             const forwardInput = document.getElementById('importForwardEnabled');
-            const tagDropdown = document.getElementById('importTagDropdown');
+            const tagDropdown = document.getElementById('importTagFilterDropdown');
 
             if (remarkInput) remarkInput.value = '';
             if (statusSelect) statusSelect.value = 'active';
@@ -878,9 +1124,77 @@
         }
 
         function getImportSelectedTagIds() {
-            return Array.from(document.querySelectorAll('.import-tag-checkbox:checked'))
-                .map(checkbox => parseInt(checkbox.value, 10))
-                .filter(Number.isFinite);
+            const container = document.getElementById('importTagFilterOptions');
+            return getTagFilterSelectedIds(container);
+        }
+
+        // ==================== 编辑账号模态框标签 ====================
+
+        function renderEditTagOptions(selectedTagIds) {
+            const container = document.getElementById('editTagFilterOptions');
+            if (!container) return;
+
+            const tags = typeof allTags !== 'undefined' && Array.isArray(allTags) ? allTags : [];
+            container.innerHTML = buildTagFilterOptionsHtml(tags, selectedTagIds || [], 'updateEditTagSummary');
+            updateEditTagSummary();
+        }
+
+        function updateEditTagSummary() {
+            const summaryEl = document.getElementById('editTagFilterTriggerText');
+            const countEl = document.getElementById('editTagFilterTriggerCount');
+            if (!summaryEl || !countEl) return;
+
+            const container = document.getElementById('editTagFilterOptions');
+            const selectedIds = getTagFilterSelectedIds(container);
+            const tags = typeof allTags !== 'undefined' && Array.isArray(allTags) ? allTags : [];
+            const selectedItems = selectedIds.map(id => tags.find(t => t.id === id)).filter(Boolean);
+            updateTagFilterSummaryText(summaryEl, countEl, selectedItems, '未选择标签');
+        }
+
+        function toggleEditTagDropdown(event) {
+            event?.stopPropagation();
+            const dropdown = document.getElementById('editTagFilterDropdown');
+            const searchInput = document.getElementById('editTagFilterSearchInput');
+            toggleTagFilterDropdownState(dropdown, searchInput, '');
+        }
+
+        function filterEditTagOptions(keyword) {
+            const container = document.getElementById('editTagFilterOptions');
+            filterTagFilterOptions(keyword, container);
+        }
+
+        function clearEditTagSelection(event) {
+            event?.stopPropagation();
+            const dropdown = document.getElementById('editTagFilterDropdown');
+            clearTagFilterCheckboxes(dropdown);
+            updateEditTagSummary();
+        }
+
+        function getEditSelectedTagIds() {
+            const container = document.getElementById('editTagFilterOptions');
+            return getTagFilterSelectedIds(container);
+        }
+
+        async function loadCloudflareChannelsForImport(forceRefresh = false) {
+            const select = document.getElementById('importCloudflareChannelSelect');
+            if (!select) return [];
+            const channels = typeof loadCloudflareChannelsForTempEmails === 'function'
+                ? await loadCloudflareChannelsForTempEmails(forceRefresh)
+                : [];
+            const enabledChannels = (Array.isArray(channels) ? channels : []).filter(channel => channel.enabled);
+            if (!enabledChannels.length) {
+                select.innerHTML = '<option value="">请先在设置中配置 Cloudflare 渠道</option>';
+                return [];
+            }
+            const currentValue = select.value;
+            select.innerHTML = enabledChannels.map(channel => (
+                `<option value="${Number(channel.id)}">${escapeHtml(channel.name || `#${channel.id}`)}</option>`
+            )).join('');
+            const defaultChannel = enabledChannels.find(channel => channel.is_default) || enabledChannels[0];
+            select.value = enabledChannels.some(channel => String(channel.id) === currentValue)
+                ? currentValue
+                : String(defaultChannel.id);
+            return enabledChannels;
         }
 
         function showAddAccountModal() {
@@ -898,14 +1212,24 @@
             if (currentGroupId) {
                 document.getElementById('importGroupSelect').value = currentGroupId;
             }
+            const cloudflareMode = document.getElementById('importCloudflareImportMode');
+            if (cloudflareMode) {
+                cloudflareMode.value = 'auto';
+            }
             resetImportDefaults();
             updateImportHint();
+            loadCloudflareChannelsForImport();
         }
 
         async function addAccount() {
             const input = document.getElementById('accountInput').value.trim();
             const groupId = parseInt(document.getElementById('importGroupSelect').value);
             const provider = document.getElementById('importProviderSelect')?.value || 'outlook';
+            const isTempGroup = isTempImportGroup();
+            const tempProvider = isTempGroup ? (document.getElementById('importChannelSelect').value || 'gptmail') : '';
+            const cloudflareMode = document.getElementById('importCloudflareImportMode')?.value || 'auto';
+            const isCloudflareAutoImport = isTempGroup && tempProvider === 'cloudflare' && cloudflareMode === 'auto';
+            const cloudflareChannelId = document.getElementById('importCloudflareChannelSelect')?.value || '';
             const imapHost = document.getElementById('importImapHost')?.value.trim() || '';
             const imapPort = parseInt(document.getElementById('importImapPort')?.value || '993', 10);
             const forwardEnabled = !!document.getElementById('importForwardEnabled')?.checked;
@@ -914,14 +1238,17 @@
             const tagIds = getImportSelectedTagIds();
             const importButton = document.querySelector('#addAccountModal .btn.btn-primary');
 
-            if (!input) {
+            if (!input && !isCloudflareAutoImport) {
                 showToast('请输入账号信息', 'error');
                 return;
             }
 
-            const isTempGroup = isTempImportGroup();
             if (!isTempGroup && provider === 'custom' && !imapHost) {
                 showToast('自定义 IMAP 必须填写服务器地址', 'error');
+                return;
+            }
+            if (isTempGroup && tempProvider === 'cloudflare' && !cloudflareChannelId) {
+                showToast('请选择 Cloudflare 渠道', 'error');
                 return;
             }
 
@@ -932,16 +1259,96 @@
                 }
                 let response;
                 if (isTempGroup) {
-                    const tempProvider = document.getElementById('importChannelSelect').value || 'gptmail';
-                    response = await fetch('/api/temp-emails/import', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            account_string: input,
-                            provider: tempProvider,
-                            tag_ids: tagIds
-                        })
-                    });
+                    const endpoint = isCloudflareAutoImport
+                        ? '/api/temp-emails/import-cloudflare-addresses'
+                        : '/api/temp-emails/import';
+                    const payload = {
+                        provider: tempProvider,
+                        tag_ids: tagIds
+                    };
+                    if (!isCloudflareAutoImport) {
+                        payload.account_string = input;
+                    }
+                    if (tempProvider === 'cloudflare') {
+                        payload.cloudflare_channel_id = cloudflareChannelId;
+                    }
+
+                    // 自动导入支持流式进度
+                    if (isCloudflareAutoImport) {
+                        payload.stream = true;
+                        const progressHint = document.getElementById('importFormatExample');
+                        if (progressHint) {
+                            progressHint.style.display = '';
+                            progressHint.textContent = '正在拉取地址列表...';
+                        }
+
+                        response = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        // 处理 Server-Sent Events 流
+                        if (response.headers.get('content-type')?.includes('text/event-stream')) {
+                            const reader = response.body.getReader();
+                            const decoder = new TextDecoder();
+                            let buffer = '';
+                            let lastData = null;
+
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+
+                                buffer += decoder.decode(value, { stream: true });
+                                const lines = buffer.split('\n\n');
+                                buffer = lines.pop() || '';
+
+                                for (const line of lines) {
+                                    if (line.startsWith('data: ')) {
+                                        try {
+                                            const eventData = JSON.parse(line.substring(6));
+                                            lastData = eventData;
+
+                                            if (eventData.type === 'progress' && progressHint) {
+                                                const percent = eventData.total > 0
+                                                    ? Math.round((eventData.imported / eventData.total) * 100)
+                                                    : 0;
+                                                progressHint.textContent = `导入进度: ${eventData.imported}/${eventData.total} (${percent}%) - 新增 ${eventData.added}，更新 ${eventData.updated}`;
+                                            } else if (eventData.type === 'complete') {
+                                                if (progressHint) {
+                                                    progressHint.textContent = eventData.success
+                                                        ? `✅ ${eventData.message || '导入完成'}`
+                                                        : `❌ ${eventData.error || '导入失败'}`;
+                                                }
+                                            }
+                                        } catch (e) {
+                                            console.error('Parse SSE error:', e);
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 使用最后收到的完整数据
+                            if (lastData && lastData.type === 'complete') {
+                                if (lastData.success) {
+                                    showToast(lastData.message, 'success');
+                                    hideAddAccountModal();
+                                    delete accountsCache[groupId];
+                                    await loadGroups();
+                                    if (currentGroupId === groupId) await loadAccountsByGroup(groupId);
+                                } else {
+                                    handleApiError(lastData, '导入临时邮箱失败');
+                                }
+                                return;
+                            }
+                        }
+                    } else {
+                        response = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                    }
                 } else {
                     response = await fetch('/api/accounts', {
                         method: 'POST',
@@ -1018,6 +1425,8 @@
                         document.getElementById('editProviderSelect').value = acc.provider || (acc.account_type === 'imap' ? 'custom' : 'outlook');
                     }
                     updateEditAccountFields();
+                    const accTags = Array.isArray(acc.tags) ? acc.tags.map(t => t.id) : [];
+                    renderEditTagOptions(accTags);
                     setModalVisible('editAccountModal', true);
                 }
             } catch (error) {
@@ -1060,7 +1469,8 @@
                     .map(item => item.trim())
                     .filter(Boolean),
                 status: document.getElementById('editStatus').value,
-                forward_enabled: !!document.getElementById('editForwardEnabled')?.checked
+                forward_enabled: !!document.getElementById('editForwardEnabled')?.checked,
+                tag_ids: getEditSelectedTagIds()
             };
             if (shouldSubmitSecretInput(passwordInput)) {
                 data.password = passwordInput.value;
@@ -1120,9 +1530,13 @@
             const saveBtn = document.getElementById('saveCloudflareChannelBtn');
             const resetBtn = document.getElementById('resetCloudflareChannelBtn');
             const deleteBtn = document.getElementById('deleteCloudflareChannelBtn');
+            const testBtn = document.getElementById('testCloudflareChannelBtn');
+            const testResult = document.getElementById('cloudflareChannelTestResult');
             if (saveBtn) saveBtn.textContent = isEditing ? '保存渠道' : '创建渠道';
             if (resetBtn) resetBtn.textContent = isEditing ? '新建渠道' : '清空表单';
             if (deleteBtn) deleteBtn.style.display = isEditing ? '' : 'none';
+            if (testBtn) testBtn.style.display = isEditing ? '' : 'none';
+            if (testResult) testResult.style.display = 'none';
         }
 
         function resetCloudflareChannelForm() {
@@ -1190,6 +1604,83 @@
             document.getElementById('settingsCloudflareEnabled').checked = !!channel.enabled;
             document.getElementById('settingsCloudflareDefault').checked = !!channel.is_default;
             setCloudflareChannelFormMode(true);
+        }
+
+        async function testCloudflareChannelConnection() {
+            const channelId = document.getElementById('settingsCloudflareChannelId')?.value || '';
+            if (!channelId) {
+                showToast('请先选择要测试的渠道', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('testCloudflareChannelBtn');
+            const resultContainer = document.getElementById('cloudflareChannelTestResult');
+            const resultText = document.getElementById('cloudflareChannelTestResultText');
+            const originalText = btn?.textContent || '';
+
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '测试中...';
+            }
+            if (resultContainer) {
+                resultContainer.style.display = '';
+            }
+            if (resultText) {
+                resultText.textContent = '正在测试 Cloudflare 管理员 API 连接...';
+                resultText.className = 'form-hint';
+            }
+
+            try {
+                const response = await fetch(`/api/cloudflare/channels/${encodeURIComponent(channelId)}/test`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await response.json();
+
+                if (resultText) {
+                    let html = `<strong>${escapeHtml(data.message || '测试完成')}</strong><br><br>`;
+                    if (data.tests && Array.isArray(data.tests)) {
+                        html += '<ul style="margin: 0; padding-left: 20px;">';
+                        for (const test of data.tests) {
+                            const icon = test.success ? '✅' : '❌';
+                            html += `<li>${icon} ${escapeHtml(test.test)}`;
+                            if (test.success) {
+                                if (test.domains) {
+                                    html += `: ${test.domains.length} 个域名`;
+                                    if (test.domains.length > 0) {
+                                        html += ` (${test.domains.slice(0, 3).map(d => escapeHtml(d)).join(', ')}${test.domains.length > 3 ? '...' : ''})`;
+                                    }
+                                } else if (test.count !== undefined) {
+                                    html += `: 总计 ${test.count} 条记录`;
+                                }
+                            } else if (test.error) {
+                                html += `: ${escapeHtml(test.error)}`;
+                            }
+                            html += '</li>';
+                        }
+                        html += '</ul>';
+                    }
+                    resultText.innerHTML = html;
+                    resultText.className = data.success ? 'form-hint success-text' : 'form-hint error-text';
+                }
+
+                if (data.success) {
+                    showToast('连接测试通过', 'success');
+                } else {
+                    showToast(data.message || '连接测试失败', 'error');
+                }
+            } catch (error) {
+                if (resultText) {
+                    resultText.textContent = `测试失败: ${error.message}`;
+                    resultText.className = 'form-hint error-text';
+                }
+                showToast('测试连接失败', 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            }
         }
 
         async function saveCloudflareChannel() {
@@ -1348,7 +1839,10 @@
                     document.getElementById('normalMailLocalRetentionAutoShowNewMail').checked = retentionAutoShowNewMail;
                     setNormalMailLocalRetentionEnabled(retentionEnabled);
                     setNormalMailLocalRetentionAutoShowNewMail(retentionAutoShowNewMail);
-                    document.getElementById('forwardCheckIntervalMinutes').value = data.settings.forward_check_interval_minutes || '5';
+                    const fallbackForwardSeconds = String((parseInt(data.settings.forward_check_interval_minutes || '5', 10) || 5) * 60);
+                    document.getElementById('forwardCheckIntervalSeconds').value = data.settings.forward_check_interval_seconds || fallbackForwardSeconds;
+                    document.getElementById('forwardExecutionMode').value = data.settings.forward_execution_mode === 'parallel' ? 'parallel' : 'serial';
+                    document.getElementById('forwardParallelWorkers').value = data.settings.forward_parallel_workers || '4';
                     document.getElementById('forwardAccountDelaySeconds').value = data.settings.forward_account_delay_seconds || '0';
                     document.getElementById('forwardEmailWindowMinutes').value = data.settings.forward_email_window_minutes || '0';
                     document.getElementById('forwardIncludeJunkemail').checked = String(data.settings.forward_include_junkemail) === 'true';
@@ -1382,6 +1876,7 @@
                     document.querySelector('input[name="refreshStrategy"][value="' + (useCron ? 'cron' : 'days') + '"]').checked = true;
                     toggleRefreshStrategy();
                     syncSmtpProviderUI(false);
+                    syncForwardExecutionModeUI();
                     await loadCloudflareChannelsForSettings();
                     await loadNormalMailRetentionStatus();
                 }
@@ -1432,8 +1927,12 @@
 
             const days = parseInt(refreshDays, 10);
             const delay = parseInt(refreshDelay, 10);
-            const forwardMinutes = parseInt(document.getElementById('forwardCheckIntervalMinutes').value || '5', 10);
-            const forwardAccountDelaySeconds = parseInt(document.getElementById('forwardAccountDelaySeconds').value || '0', 10);
+            const forwardSeconds = parseInt(document.getElementById('forwardCheckIntervalSeconds').value || '300', 10);
+            const forwardExecutionMode = document.getElementById('forwardExecutionMode')?.value === 'parallel' ? 'parallel' : 'serial';
+            const forwardParallelWorkers = parseInt(document.getElementById('forwardParallelWorkers').value || '4', 10);
+            const forwardAccountDelaySeconds = forwardExecutionMode === 'parallel'
+                ? 0
+                : parseInt(document.getElementById('forwardAccountDelaySeconds').value || '0', 10);
             const forwardWindowMinutes = parseInt(document.getElementById('forwardEmailWindowMinutes').value || '0', 10);
             const forwardIncludeJunkemail = !!document.getElementById('forwardIncludeJunkemail')?.checked;
             const forwardIncludeAccountGroup = !!document.getElementById('forwardIncludeAccountGroup')?.checked;
@@ -1466,8 +1965,16 @@
                 showToast('Invalid time zone', 'error');
                 return;
             }
-            if (Number.isNaN(forwardMinutes) || forwardMinutes < 1 || forwardMinutes > 60) {
-                showToast('转发轮询间隔必须在 1-60 分钟之间', 'error');
+            if (Number.isNaN(forwardSeconds) || forwardSeconds < 20 || forwardSeconds > 3600) {
+                showToast('转发轮询间隔必须在 20-3600 秒之间', 'error');
+                return;
+            }
+            if (!['serial', 'parallel'].includes(forwardExecutionMode)) {
+                showToast('转发执行模式无效', 'error');
+                return;
+            }
+            if (Number.isNaN(forwardParallelWorkers) || forwardParallelWorkers < 1 || forwardParallelWorkers > 10) {
+                showToast('转发并行 worker 数必须在 1-10 之间', 'error');
                 return;
             }
             if (Number.isNaN(forwardAccountDelaySeconds) || forwardAccountDelaySeconds < 0 || forwardAccountDelaySeconds > 60) {
@@ -1545,7 +2052,10 @@
             settings.normal_mail_local_retention_enabled = normalMailLocalRetentionEnabled;
             settings.normal_mail_local_retention_auto_show_new_mail = normalMailLocalRetentionAutoShowNewMail;
             settings.forward_channels = forwardChannels;
-            settings.forward_check_interval_minutes = forwardMinutes;
+            settings.forward_check_interval_seconds = forwardSeconds;
+            settings.forward_check_interval_minutes = Math.max(1, Math.min(60, Math.ceil(forwardSeconds / 60)));
+            settings.forward_execution_mode = forwardExecutionMode;
+            settings.forward_parallel_workers = forwardParallelWorkers;
             settings.forward_account_delay_seconds = forwardAccountDelaySeconds;
             settings.forward_email_window_minutes = forwardWindowMinutes;
             settings.forward_include_junkemail = forwardIncludeJunkemail;

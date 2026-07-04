@@ -22,6 +22,8 @@ SEGMENT_FILES = (
     "07_routes_oauth_settings_external.py",
     "08_forwarding_scheduler_errors.py",
     "09_routes_system_update.py",
+    "10_routes_email_shares.py",
+    "11_routes_graph_oauth.py",
 )
 
 SEGMENTS_DIR = Path(__file__).resolve().parent / "outlook_web" / "segments"

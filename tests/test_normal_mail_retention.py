@@ -526,13 +526,10 @@ class NormalMailRetentionTests(unittest.TestCase):
                 finally:
                     db.close()
 
-                with self.app.test_client() as client:
-                    with client.session_transaction() as session:
-                        session['logged_in'] = True
-                    response = client.get('/api/settings')
-                    status_code = response.status_code
-                    payload = response.get_json()
-                    response.close()
+                response = self.client.get('/api/settings')
+                status_code = response.status_code
+                payload = response.get_json()
+                response.close()
 
         self.assertIsNotNone(retention_row)
         self.assertEqual(retention_row[0], 'false')

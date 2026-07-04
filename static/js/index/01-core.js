@@ -1,4 +1,4 @@
-        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountPageSizeSelect, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, initSearchModeToggle, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, scheduleEmailListLoadCheck, searchAccounts, searchMailContents */
+        /* global applyPendingNewMailSync, closeAllModals, debounce, ensureForwardingSettingsUI, handleGlobalEditTagClick, handleGlobalGroupPointerMove, handleGlobalGroupPointerUp, hasPendingNewMailSync, initAccountListScroll, initAccountMailAccessStatusFilter, initAccountPageSizeSelect, initAccountSearchInput, initAccountSearchScopeSelect, initAccountSelectionGestures, initColorPicker, initEmailListScroll, initSearchModeToggle, loadGroups, loadMoreCloudflareGlobalMessages, loadTags, renderEmailList, saveAccountSearchQueryPreference, scheduleEmailListLoadCheck, searchAccounts, searchMailContents */
 
         // 全局状态
         let csrfToken = null;
@@ -1268,6 +1268,8 @@
 
         // 初始化
         document.addEventListener('DOMContentLoaded', async function () {
+            // 初始化主题
+            initTheme();
             // 初始化 CSRF Token
             await initCSRFToken();
             await loadAppTimeZoneFromSettings();
@@ -1278,6 +1280,41 @@
             document.addEventListener('click', handleGlobalTagFilterClick);
             document.addEventListener('click', handleGlobalImportTagClick);
             initGroupPanelCollapse();
+            document.addEventListener('click', handleGlobalEditTagClick);
+            
+            // Dropdown menu click handling (for batch actions and navbar settings)
+            document.addEventListener('click', function(e) {
+                // Batch action dropdowns
+                const activeBatchDropdown = e.target.closest('.batch-dropdown');
+                const batchToggle = e.target.closest('.batch-dropdown .dropdown-toggle');
+                
+                document.querySelectorAll('.batch-dropdown').forEach(dropdown => {
+                    if (dropdown !== activeBatchDropdown) {
+                        dropdown.classList.remove('is-open');
+                    }
+                });
+                
+                if (batchToggle && activeBatchDropdown) {
+                    activeBatchDropdown.classList.toggle('is-open');
+                    e.stopPropagation();
+                }
+
+                // Navbar dropdowns
+                const activeNavDropdown = e.target.closest('.navbar-dropdown');
+                const navToggle = e.target.closest('.navbar-dropdown .dropdown-toggle');
+                
+                document.querySelectorAll('.navbar-dropdown').forEach(dropdown => {
+                    if (dropdown !== activeNavDropdown) {
+                        dropdown.classList.remove('is-open');
+                    }
+                });
+                
+                if (navToggle && activeNavDropdown) {
+                    activeNavDropdown.classList.toggle('is-open');
+                    e.stopPropagation();
+                }
+            });
+
             document.getElementById('importImapHost')?.addEventListener('input', updateImportHint);
             document.getElementById('importImapPort')?.addEventListener('input', updateImportHint);
             document.getElementById('oauthEmailInput')?.addEventListener('input', invalidateRefreshTokenPreview);
@@ -1331,6 +1368,7 @@
             if (typeof initSearchModeToggle === 'function') {
                 initSearchModeToggle();
             }
+            initAccountSearchInput();
             if (typeof initAccountSelectionGestures === 'function') {
                 initAccountSelectionGestures();
             }
@@ -1341,10 +1379,13 @@
             // 绑定搜索框事件
             const searchInput = document.getElementById('globalSearch');
             if (searchInput) {
-                const debouncedSearch = debounce((e) => {
-                    searchAccounts(e.target.value);
+                const debouncedSearch = debounce((value) => {
+                    searchAccounts(value);
                 }, 300);
-                searchInput.addEventListener('input', debouncedSearch);
+                searchInput.addEventListener('input', function (event) {
+                    saveAccountSearchQueryPreference(event.target.value);
+                    debouncedSearch(event.target.value);
+                });
             }
             const mailSearchExcludeInput = document.getElementById('mailSearchExcludeInput');
             if (mailSearchExcludeInput) {
@@ -1353,6 +1394,10 @@
                 }, 300);
                 mailSearchExcludeInput.addEventListener('input', debouncedMailExcludeSearch);
             }
+
+            // 初始化折叠状态和极简模式状态
+            initGroupPanelCollapseState();
+            initAccountMinimalModeState();
 
             syncResponsiveUI();
             handleExtensionLaunchHash();
@@ -1526,12 +1571,22 @@
         }
 
         function closeImportTagDropdown() {
-            document.getElementById('importTagDropdown')?.classList.remove('open');
+            document.getElementById('importTagFilterDropdown')?.classList.remove('open');
         }
 
         function handleGlobalImportTagClick(event) {
-            if (!event.target.closest('#importTagDropdown')) {
+            if (!event.target.closest('#importTagFilterDropdown')) {
                 closeImportTagDropdown();
+            }
+        }
+
+        function closeEditTagDropdown() {
+            document.getElementById('editTagFilterDropdown')?.classList.remove('open');
+        }
+
+        function handleGlobalEditTagClick(event) {
+            if (!event.target.closest('#editTagFilterDropdown')) {
+                closeEditTagDropdown();
             }
         }
 
@@ -1573,10 +1628,14 @@
 
                     if (action === 'copy') {
                         copyEmail(accountEmail);
+                    } else if (action === 'share') {
+                        showCreateEmailShareModal(accountId, accountEmail);
                     } else if (action === 'forwardingLogs') {
                         showAccountForwardingLogs(accountId, accountEmail);
                     } else if (action === 'toggleStatus') {
                         toggleAccountStatus(accountId, accountStatus);
+                    } else if (action === 'outlookAutoAuth') {
+                        queueAccountForOutlookAutoAuth(accountId, accountEmail);
                     } else if (action === 'edit') {
                         showEditAccountModal(accountId);
                     } else if (action === 'delete') {
@@ -2492,8 +2551,13 @@ ${details}
         function updateCurrentGroupHeader(group = null, titleOverride = '') {
             const nameEl = document.getElementById('currentGroupName');
             const idBadgeEl = document.getElementById('currentGroupIdBadge');
+            const refreshBtn = document.getElementById('refreshAccountListBtn');
             if (!nameEl || !idBadgeEl) {
                 return;
+            }
+
+            if (refreshBtn) {
+                refreshBtn.style.display = (group || titleOverride) ? 'inline-flex' : 'none';
             }
 
             if (titleOverride) {
@@ -2515,3 +2579,114 @@ ${details}
             idBadgeEl.textContent = badgeText;
             idBadgeEl.style.display = badgeText ? 'inline-flex' : 'none';
         }
+
+        // ------------------ 折叠分组栏 & 极简模式 ------------------
+        function initGroupPanelCollapseState() {
+            const isCollapsed = localStorage.getItem('outlook_group_panel_collapsed') === 'true';
+            document.body.classList.toggle('group-panel-collapsed', isCollapsed);
+
+            const collapseBtn = document.getElementById('collapseGroupPanelBtn');
+            const expandBtn = document.getElementById('expandGroupPanelBtn');
+            if (collapseBtn) collapseBtn.setAttribute('aria-expanded', !isCollapsed);
+            if (expandBtn) expandBtn.setAttribute('aria-expanded', isCollapsed);
+        }
+
+        function toggleGroupPanelCollapse() {
+            const isCollapsed = !document.body.classList.contains('group-panel-collapsed');
+            document.body.classList.toggle('group-panel-collapsed', isCollapsed);
+            localStorage.setItem('outlook_group_panel_collapsed', String(isCollapsed));
+
+            const collapseBtn = document.getElementById('collapseGroupPanelBtn');
+            const expandBtn = document.getElementById('expandGroupPanelBtn');
+            if (collapseBtn) collapseBtn.setAttribute('aria-expanded', !isCollapsed);
+            if (expandBtn) expandBtn.setAttribute('aria-expanded', isCollapsed);
+
+            if (typeof syncResponsiveUI === 'function') {
+                syncResponsiveUI();
+            }
+        }
+
+        function initAccountMinimalModeState() {
+            const isMinimal = localStorage.getItem('outlook_account_list_minimal') === 'true';
+            const panel = document.getElementById('accountPanel');
+            const btn = document.getElementById('accountMinimalBtn');
+            if (panel) {
+                panel.classList.toggle('minimal-mode', isMinimal);
+            }
+            if (btn) {
+                btn.classList.toggle('active', isMinimal);
+                btn.setAttribute('aria-pressed', isMinimal ? 'true' : 'false');
+                btn.title = isMinimal ? '切换详细展示' : '切换极简展示';
+            }
+        }
+
+        function toggleAccountMinimalMode() {
+            const panel = document.getElementById('accountPanel');
+            const btn = document.getElementById('accountMinimalBtn');
+            if (!panel) return;
+
+            const isMinimal = !panel.classList.contains('minimal-mode');
+            panel.classList.toggle('minimal-mode', isMinimal);
+            localStorage.setItem('outlook_account_list_minimal', String(isMinimal));
+
+            if (btn) {
+                btn.classList.toggle('active', isMinimal);
+                btn.setAttribute('aria-pressed', isMinimal ? 'true' : 'false');
+                btn.title = isMinimal ? '切换详细展示' : '切换极简展示';
+            }
+        }
+
+        // ==================== 主题与列表刷新相关 ====================
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const currentTheme = savedTheme || 'light';
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            updateThemeToggleIcons(currentTheme);
+        }
+
+        function toggleTheme() {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            updateThemeToggleIcons(newTheme);
+        }
+
+        function updateThemeToggleIcons(theme) {
+            const sunIcon = document.querySelector('#desktopThemeToggleBtn .sun-icon');
+            const moonIcon = document.querySelector('#desktopThemeToggleBtn .moon-icon');
+            if (sunIcon && moonIcon) {
+                if (theme === 'dark') {
+                    sunIcon.style.display = 'block';
+                    moonIcon.style.display = 'none';
+                } else {
+                    sunIcon.style.display = 'none';
+                    moonIcon.style.display = 'block';
+                }
+            }
+        }
+
+        async function refreshCurrentAccountList() {
+            const refreshBtn = document.getElementById('refreshAccountListBtn');
+            if (refreshBtn) {
+                refreshBtn.classList.add('spinning');
+                refreshBtn.disabled = true;
+            }
+            try {
+                if (window.isTempEmailGroup && typeof window.loadTempEmails === 'function') {
+                    await window.loadTempEmails(true);
+                } else if (window.currentGroupId && typeof window.loadAccountsByGroup === 'function') {
+                    await window.loadAccountsByGroup(window.currentGroupId, true);
+                }
+            } catch (e) {
+                console.error(e);
+            } finally {
+                if (refreshBtn) {
+                    refreshBtn.classList.remove('spinning');
+                    refreshBtn.disabled = false;
+                }
+            }
+        }
+
+        window.toggleTheme = toggleTheme;
+        window.refreshCurrentAccountList = refreshCurrentAccountList;

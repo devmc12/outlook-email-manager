@@ -642,9 +642,20 @@ def api_get_settings():
         'normal_mail_local_retention_auto_show_new_mail',
         'false',
     )
+    skin_settings = get_skin_settings_payload()
+    settings['active_skin_id'] = skin_settings['active_skin_id']
+    settings['configured_skin_id'] = skin_settings['configured_skin_id']
+    settings['active_skin'] = skin_settings['active_skin']
+    settings['active_skin_asset_hash'] = skin_settings['asset_hash']
     settings['forward_channels'] = get_forward_channels()
     settings['forward_check_interval_minutes'] = get_setting('forward_check_interval_minutes', '5')
-    settings['forward_account_delay_seconds'] = get_setting('forward_account_delay_seconds', '0')
+    settings['forward_check_interval_seconds'] = str(normalize_forward_check_interval_seconds())
+    forward_execution_mode = normalize_forward_execution_mode()
+    settings['forward_execution_mode'] = forward_execution_mode
+    settings['forward_parallel_workers'] = str(normalize_forward_parallel_workers())
+    settings['forward_account_delay_seconds'] = (
+        '0' if forward_execution_mode == 'parallel' else get_setting('forward_account_delay_seconds', '0')
+    )
     settings['forward_email_window_minutes'] = get_setting('forward_email_window_minutes', '0')
     settings['forward_include_junkemail'] = get_setting('forward_include_junkemail', 'false')
     settings['forward_include_account_group'] = get_setting('forward_include_account_group', 'false')
@@ -890,6 +901,13 @@ def api_update_settings():
         else:
             errors.append('普通邮箱本地保留自动展示新邮件必须是 true 或 false')
 
+    if 'active_skin_id' in data:
+        success, error, _skin = set_active_skin(data.get('active_skin_id'))
+        if success:
+            updated.append('当前皮肤')
+        else:
+            errors.append(error or '保存当前皮肤失败')
+
     # 更新对外 API Key
     if 'external_api_key' in data:
         new_ext_key = data['external_api_key'].strip()
@@ -977,6 +995,9 @@ def api_update_settings():
             else:
                 errors.append('保存 Cloudflare AI API Key 失败')
 
+    forward_execution_mode_for_delay = normalize_forward_execution_mode()
+    forward_account_delay_updated = False
+
     if 'forward_check_interval_minutes' in data:
         try:
             minutes = int(data['forward_check_interval_minutes'])
@@ -984,22 +1005,70 @@ def api_update_settings():
                 errors.append('转发检查间隔必须在 1-60 分钟之间')
             elif set_setting('forward_check_interval_minutes', str(minutes)):
                 updated.append('转发检查间隔')
+                if 'forward_check_interval_seconds' not in data:
+                    if not set_setting('forward_check_interval_seconds', str(minutes * 60)):
+                        errors.append('保存转发秒级轮询间隔失败')
             else:
                 errors.append('保存转发检查间隔失败')
         except ValueError:
             errors.append('转发检查间隔必须是数字')
 
+    if 'forward_check_interval_seconds' in data:
+        try:
+            seconds = parse_forward_check_interval_seconds_input(data['forward_check_interval_seconds'])
+            if set_setting('forward_check_interval_seconds', str(seconds)):
+                updated.append('转发秒级轮询间隔')
+            else:
+                errors.append('保存转发秒级轮询间隔失败')
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    if 'forward_execution_mode' in data:
+        try:
+            execution_mode = parse_forward_execution_mode_input(data['forward_execution_mode'])
+            if set_setting('forward_execution_mode', execution_mode):
+                updated.append('转发执行模式')
+                forward_execution_mode_for_delay = execution_mode
+            else:
+                errors.append('保存转发执行模式失败')
+        except ValueError as exc:
+            errors.append(str(exc))
+
+    if 'forward_parallel_workers' in data:
+        try:
+            workers = parse_forward_parallel_workers_input(data['forward_parallel_workers'])
+            if set_setting('forward_parallel_workers', str(workers)):
+                updated.append('转发并行 worker 数')
+            else:
+                errors.append('保存转发并行 worker 数失败')
+        except ValueError as exc:
+            errors.append(str(exc))
+
     if 'forward_account_delay_seconds' in data:
         try:
-            seconds = int(data['forward_account_delay_seconds'])
+            seconds = (
+                0 if forward_execution_mode_for_delay == 'parallel'
+                else int(data['forward_account_delay_seconds'])
+            )
             if seconds < 0 or seconds > 60:
                 errors.append('账号间拉取间隔必须在 0-60 秒之间')
             elif set_setting('forward_account_delay_seconds', str(seconds)):
                 updated.append('账号间拉取间隔')
+                forward_account_delay_updated = True
             else:
                 errors.append('保存账号间拉取间隔失败')
-        except ValueError:
+        except (TypeError, ValueError):
             errors.append('账号间拉取间隔必须是数字')
+
+    if (
+        'forward_execution_mode' in data
+        and forward_execution_mode_for_delay == 'parallel'
+        and not forward_account_delay_updated
+    ):
+        if set_setting('forward_account_delay_seconds', '0'):
+            updated.append('账号间拉取间隔')
+        else:
+            errors.append('保存账号间拉取间隔失败')
 
     if 'forward_email_window_minutes' in data:
         try:
@@ -1192,6 +1261,97 @@ def api_update_settings():
         return jsonify({'success': False, 'error': '没有需要更新的设置'})
 
 
+# ==================== 皮肤管理 API ====================
+
+@app.route('/api/skins', methods=['GET'])
+@login_required
+def api_list_skins():
+    return jsonify({
+        'success': True,
+        **get_skin_settings_payload(),
+    })
+
+
+@app.route('/api/skins/<skin_id>/activate', methods=['POST'])
+@login_required
+def api_activate_skin(skin_id):
+    success, error, skin = set_active_skin(skin_id)
+    if not success:
+        return jsonify({'success': False, 'error': error or '启用皮肤失败'})
+    return jsonify({
+        'success': True,
+        'message': '皮肤已启用',
+        'active_skin': skin,
+        'asset_hash': get_active_skin_asset_hash(),
+    })
+
+
+@app.route('/api/skins/upload', methods=['POST'])
+@login_required
+def api_upload_skin():
+    uploaded_file = request.files.get('skin') or request.files.get('file')
+    try:
+        skin = install_uploaded_skin_file(uploaded_file)
+    except SkinValidationError as exc:
+        return jsonify({'success': False, 'error': str(exc)})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': f'安装上传皮肤失败: {sanitize_error_details(str(exc))}'})
+
+    return jsonify({
+        'success': True,
+        'message': '皮肤已安装',
+        'skin': skin,
+    })
+
+
+@app.route('/api/skins/git/install', methods=['POST'])
+@login_required
+def api_install_git_skin():
+    data = request.get_json(silent=True) or {}
+    try:
+        skin = install_git_skin_package(data.get('git_url'), data.get('git_ref', ''))
+    except SkinValidationError as exc:
+        return jsonify({'success': False, 'error': str(exc)})
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': '拉取 Git 皮肤超时'})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': f'安装 Git 皮肤失败: {sanitize_error_details(str(exc))}'})
+
+    return jsonify({
+        'success': True,
+        'message': 'Git 皮肤已安装',
+        'skin': skin,
+    })
+
+
+@app.route('/api/skins/<skin_id>/git/update', methods=['POST'])
+@login_required
+def api_update_git_skin(skin_id):
+    try:
+        skin = update_git_skin_package(skin_id)
+    except SkinValidationError as exc:
+        return jsonify({'success': False, 'error': str(exc)})
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': '更新 Git 皮肤超时'})
+    except Exception as exc:
+        return jsonify({'success': False, 'error': f'更新 Git 皮肤失败: {sanitize_error_details(str(exc))}'})
+
+    return jsonify({
+        'success': True,
+        'message': 'Git 皮肤已更新',
+        'skin': skin,
+    })
+
+
+@app.route('/api/skins/<skin_id>', methods=['DELETE'])
+@login_required
+def api_delete_skin(skin_id):
+    success, error = delete_custom_skin(skin_id)
+    if not success:
+        return jsonify({'success': False, 'error': error or '删除皮肤失败'})
+    return jsonify({'success': True, 'message': '皮肤已删除'})
+
+
 # ==================== 对外 API ====================
 
 @app.route('/api/external/emails', methods=['GET'])
@@ -1279,3 +1439,160 @@ def api_external_get_emails():
         all_errors['imap_old'] = imap_old_result.get('error')
 
     return jsonify({'success': False, 'error': '无法获取邮件，所有方式均失败', 'details': all_errors})
+
+
+@app.route('/api/external/outlook/upload', methods=['POST'])
+@csrf_exempt
+@api_key_required
+def api_external_upload_outlook():
+    """对外 API：上传 Outlook 邮箱账号密码到上传表（默认未授权）。
+
+    支持单条 {email, password, remark?} 或批量 {accounts: [...]}。
+    """
+    data = request.get_json(silent=True) or {}
+
+    raw_accounts = data.get('accounts')
+    if isinstance(raw_accounts, list) and raw_accounts:
+        items = [
+            {
+                'email': item.get('email', ''),
+                'password': item.get('password', ''),
+                'remark': item.get('remark', ''),
+            }
+            for item in raw_accounts
+            if isinstance(item, dict)
+        ]
+    elif data.get('email'):
+        items = [{
+            'email': data.get('email', ''),
+            'password': data.get('password', ''),
+            'remark': data.get('remark', ''),
+        }]
+    else:
+        return jsonify({'success': False, 'error': '请求体需包含 email/password 或非空 accounts 数组'}), 400
+
+    summary = add_upload_accounts_bulk(items)
+    return jsonify({'success': True, **summary})
+
+
+@app.route('/api/outlook-upload-accounts', methods=['GET'])
+@login_required
+def api_list_outlook_upload_accounts():
+    """分页查询外部上传的 Outlook 账号，供前端弹框表格展示。"""
+    page = parse_non_negative_int(request.args.get('page', 1), 1) or 1
+    page_size = parse_non_negative_int(request.args.get('page_size', 20), 20, 200)
+    keyword = str(request.args.get('keyword', '') or '').strip()
+    result = query_upload_accounts_page(page=page, page_size=page_size, keyword=keyword)
+    return jsonify({'success': True, **result})
+
+
+@app.route('/api/outlook-upload-accounts', methods=['POST'])
+@login_required
+def api_add_outlook_upload_account():
+    """添加单个外部上传的 Outlook 账号。"""
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email', '') or '').strip()
+    password = str(data.get('password', '') or '').strip()
+    remark = str(data.get('remark', '') or '').strip()
+
+    if not email:
+        return jsonify({'success': False, 'error': '邮箱不能为空'}), 400
+    if not password:
+        return jsonify({'success': False, 'error': '密码不能为空'}), 400
+
+    result = add_upload_account(email, password, remark)
+    db = get_db()
+    db.commit()
+
+    if result['status'] == 'added':
+        return jsonify({'success': True, 'message': '添加成功', 'account': result})
+    elif result['status'] == 'duplicate':
+        return jsonify({'success': False, 'error': '该邮箱已存在'}), 400
+    else:
+        return jsonify({'success': False, 'error': '邮箱格式无效'}), 400
+
+
+@app.route('/api/outlook-upload-accounts/<int:account_id>', methods=['DELETE'])
+@login_required
+def api_delete_outlook_upload_account(account_id):
+    """删除指定 ID 的外部上传账号。"""
+    success = delete_upload_account(account_id)
+    if success:
+        db = get_db()
+        db.commit()
+        return jsonify({'success': True, 'message': '删除成功'})
+    else:
+        return jsonify({'success': False, 'error': '账号不存在'}), 404
+
+
+@app.route('/api/accounts/<int:account_id>/outlook-auto-auth', methods=['POST'])
+@login_required
+def api_queue_account_for_outlook_auto_auth(account_id):
+    """将已有 Outlook 正式账号加入 Outlook 自动化授权队列。
+
+    从服务端读取正式账号邮箱和密码，调用显式重新入队 helper 写入
+    outlook_upload_accounts。不返回密码。
+    """
+    account = get_account_by_id(account_id)
+    if not account:
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'ACCOUNT_NOT_FOUND',
+                '账号不存在',
+                'NotFoundError',
+                404,
+                f'account_id={account_id}',
+            ),
+        }), 404
+
+    account_type = str(account.get('account_type') or 'outlook').lower()
+    if account_type == 'imap':
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'ACCOUNT_AUTO_AUTH_UNSUPPORTED',
+                'IMAP 账号不支持加入 Outlook 自动化授权',
+                'UnsupportedError',
+                400,
+                f'account_id={account_id} type=imap',
+            ),
+        }), 400
+
+    email = str(account.get('email') or '').strip()
+    password = str(account.get('password') or '').strip()
+    if not email or not password:
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'ACCOUNT_PASSWORD_MISSING',
+                '账号密码为空或无法解密，请先在编辑中设置密码',
+                'ValidationError',
+                400,
+                f'account_id={account_id}',
+            ),
+        }), 400
+
+    remark = str(account.get('remark') or '').strip()
+    result = upsert_upload_account_for_auto_auth(email, password, remark)
+    if result['status'] == 'invalid':
+        return jsonify({
+            'success': False,
+            'error': build_error_payload(
+                'ACCOUNT_AUTO_AUTH_INVALID',
+                '邮箱或密码无效，无法加入自动授权',
+                'ValidationError',
+                400,
+                f'account_id={account_id}',
+            ),
+        }), 400
+
+    get_db().commit()
+
+    return jsonify({
+        'success': True,
+        'message': '已加入自动授权' if result['status'] == 'added' else '已重新加入自动授权',
+        'upload_account_id': result['id'],
+        'email': result['email'],
+        'status': result['status'],
+    })

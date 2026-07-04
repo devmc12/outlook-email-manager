@@ -41,3 +41,7 @@ Thumbs.db
 /.tmp/
 /.qoder/
 run.ps1
+openspec
+待办
+/.playwright-cli
+.test_tmp/

@@ -37,6 +37,7 @@
 | --- | --- | --- | --- | --- |
 | GET | `/api/external/accounts` | API Key | JSON | 获取普通邮箱账号列表 |
 | GET | `/api/external/emails` | API Key | JSON | 获取指定邮箱邮件列表 |
+| POST | `/api/external/outlook/upload` | API Key | JSON | 上传 Outlook 邮箱账号密码到上传表（默认未授权，支持单条/批量） |
 
 ### 分组、账号、标签、项目
 
@@ -142,6 +143,12 @@
 | GET | `/api/settings` | Session | JSON | 获取系统设置 |
 | PUT | `/api/settings` | Session + CSRF | JSON | 更新系统设置 |
 | POST | `/api/settings/test-forward-channel` | Session + CSRF | JSON | 直接测试转发渠道 |
+| GET | `/api/skins` | Session | JSON | 获取系统级外观皮肤列表与当前皮肤 |
+| POST | `/api/skins/<skin_id>/activate` | Session + CSRF | JSON | 启用指定皮肤 |
+| POST | `/api/skins/upload` | Session + CSRF | JSON | 上传 zip 皮肤包 |
+| POST | `/api/skins/git/install` | Session + CSRF | JSON | 从 Git 仓库安装皮肤 |
+| POST | `/api/skins/<skin_id>/git/update` | Session + CSRF | JSON | 更新 Git 来源皮肤 |
+| DELETE | `/api/skins/<skin_id>` | Session + CSRF | JSON | 删除未启用的自定义皮肤 |
 
 ## 认证
 
@@ -494,6 +501,70 @@ curl -H "X-API-Key: your-api-key" \
 
 如果使用回退候选命中，响应会包含 `resolved_query_email`、`fallback_used`、`fallback_email` 等字段。
 
+### POST `/api/external/outlook/upload`
+
+上传 Outlook 邮箱账号和密码，保存到独立的上传暂存表 `outlook_upload_accounts`。入库记录的"是否授权"字段默认值为未授权（`is_authorized = 0`）。支持一次上传单条或批量。
+
+> 说明：该接口仅负责存储，不触发授权流程；上传的密码会加密存储，接口响应不会回显密码。
+
+#### 请求体
+
+单条：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `email` | string | 是 | 邮箱账号，入库前转小写并去除首尾空格；重复将被跳过 |
+| `password` | string | 是 | 邮箱密码 |
+| `remark` | string | 否 | 备注 |
+
+批量（与上面二选一）：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `accounts` | array | 是 | 元素为 `{email, password, remark?}` 的数组；非空时按批量处理 |
+
+#### 请求示例
+
+```bash
+# 单条
+curl -X POST -H "X-API-Key: your-api-key" -H "Content-Type: application/json" \
+  -d '{"email":"user@outlook.com","password":"pwd123","remark":"可选"}' \
+  "http://localhost:5000/api/external/outlook/upload"
+
+# 批量
+curl -X POST -H "X-API-Key: your-api-key" -H "Content-Type: application/json" \
+  -d '{"accounts":[{"email":"a@outlook.com","password":"p1"},{"email":"b@outlook.com","password":"p2"}]}' \
+  "http://localhost:5000/api/external/outlook/upload"
+```
+
+#### 成功响应示例
+
+```json
+{
+  "success": true,
+  "total": 2,
+  "added": 1,
+  "duplicate": 1,
+  "invalid": 0,
+  "results": [
+    { "email": "a@outlook.com", "status": "added", "id": 5 },
+    { "email": "b@outlook.com", "status": "duplicate" }
+  ]
+}
+```
+
+#### 返回说明
+
+- `total` / `added` / `duplicate` / `invalid`：本次处理总数与各状态计数
+- `results[].status` 取值：
+  - `added`：新增成功，附带 `id`
+  - `duplicate`：`email` 已存在，被跳过（不覆盖原记录）
+  - `invalid`：`email` 缺少 `@` 或 `password` 为空，未入库
+- 上传密码加密存储，响应不回显 `password`
+- 入库记录 `is_authorized` 一律为 `0`（未授权）
+- 请求体既无 `email` 也无非空 `accounts` 时返回 HTTP 400
+- 缺少 / 无效 API Key 时由鉴权层返回 HTTP 401 / 403
+
 ## 内部 API
 
 ## 分组管理
@@ -829,6 +900,40 @@ Content-Type: application/json
 - `ACCOUNT_REAUTH_UNSUPPORTED`: IMAP 账号不支持重新授权
 - `OAUTH_EXCHANGE_FAILED`: 回调 URL 无效或 Microsoft 换取 Token 失败
 - `ACCOUNT_REAUTH_SAVE_FAILED`: 新授权信息保存失败
+
+### POST `/api/accounts/<account_id>/outlook-auto-auth`
+
+将已有 Outlook 正式账号加入 Outlook 自动化授权队列。该接口从服务端读取正式账号的邮箱和密码，写入 `outlook_upload_accounts` 暂存表，不返回明文密码。仅支持 Outlook 账号，不支持 IMAP 账号。
+
+该接口不会立即启动 Graph 自动化授权任务；用户仍需在 Outlook 自动化授权弹窗中执行授权。对同邮箱已存在暂存记录会覆盖密码并重置为未授权状态。
+
+请求体：无需参数。
+
+成功响应示例：
+
+```json
+{
+  "success": true,
+  "message": "已加入自动授权",
+  "upload_account_id": 42,
+  "email": "user@outlook.com",
+  "status": "added"
+}
+```
+
+`status` 取值：
+
+- `added`: 新增了暂存记录
+- `updated`: 覆盖了已有暂存记录（重新入队）
+
+常见错误：
+
+- `ACCOUNT_NOT_FOUND` (404): 账号不存在
+- `ACCOUNT_AUTO_AUTH_UNSUPPORTED` (400): IMAP 账号不支持加入 Outlook 自动化授权
+- `ACCOUNT_PASSWORD_MISSING` (400): 账号密码为空或无法解密
+- `ACCOUNT_AUTO_AUTH_INVALID` (400): 邮箱或密码无效
+
+> **安全约束**：该接口不会在响应中返回密码。密码仅从服务端保存的加密数据中读取并加密写入暂存表。
 
 ### POST `/api/accounts/batch-update-group`
 
@@ -1707,9 +1812,11 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 | POST | `/api/cloudflare/channels` | JSON: 渠道配置 | 创建 Cloudflare 渠道 |
 | PUT | `/api/cloudflare/channels/<id>` | JSON: 渠道配置 | 更新 Cloudflare 渠道 |
 | DELETE | `/api/cloudflare/channels/<id>` | 无 | 删除未被引用的 Cloudflare 渠道 |
+| POST | `/api/cloudflare/channels/<id>/test` | 无 | 测试 Cloudflare 渠道管理员 API 连接 |
 | GET | `/api/cloudflare/domains` | Query: `channel_id` | 获取指定 Cloudflare 渠道可用域名 |
 | GET | `/api/cloudflare/messages` | Query: `channel_id?`、`limit?`、`offset?`、`address?` | 使用指定或默认 Cloudflare 渠道的管理员接口查看该渠道全部邮件，可选按收件地址过滤 |
-| POST | `/api/temp-emails/generate-batch` | JSON: `provider=cloudflare`、`count`、`channel_id?`、`domain?`、`usernames?`、`tag_ids?` | 批量生成 Cloudflare 临时邮箱 |
+| POST | `/api/temp-emails/import-cloudflare-addresses` | JSON: `cloudflare_channel_id`、`tag_ids?`、`page_size?`、`stream?` | 从指定 Cloudflare 渠道自动拉取地址列表导入，通过管理员 API 管理；`stream=true` 时返回 Server-Sent Events 流式进度 |
+| POST | `/api/temp-emails/generate-batch` | JSON: `provider=cloudflare`、`count`、`channel_id?`、`domain?`、`usernames?`、`tag_ids?` | 批量生成 Cloudflare 临时邮箱，通过管理员 API 管理 |
 | POST | `/api/cloudflare/ai-usernames/test` | JSON: AI 草稿配置、`count` | 使用未保存或已保存的配置测试 AI 用户名生成 |
 | POST | `/api/cloudflare/ai-usernames/generate` | JSON: `count` | 使用已保存且启用的 AI 配置生成严格等量用户名 |
 
@@ -1717,7 +1824,7 @@ ZIP 内文件名使用附件原始文件名；如果多个附件同名，会自�
 
 - `provider=gptmail`: 每行一个邮箱
 - `provider=duckmail`: 每行 `邮箱----密码`
-- `provider=cloudflare`: 支持旧格式每行 `邮箱----JWT`，会导入默认 Cloudflare 渠道；也支持按 `[cloudflare:<channel_name>]` 分段后在分段内写 `邮箱----JWT`，或每行写 `邮箱----JWT----渠道名`
+- `provider=cloudflare`: 每行一个邮箱地址，使用请求中的 `cloudflare_channel_id` 绑定渠道；所有 Cloudflare 邮箱统一通过渠道管理员 API 管理，不再使用 JWT；兼容旧格式 `邮箱----JWT`，会自动提取邮箱部分
 
 ### POST `/api/temp-emails/generate`
 
@@ -1965,8 +2072,16 @@ POST /api/cloudflare/channels
 | `app_timezone` | 当前系统时区，IANA 时区名，例如 `Asia/Shanghai` |
 | `show_account_created_at` | 是否在邮箱列表展示创建时间 |
 | `show_account_sort_order` | 是否在邮箱列表展示自定义排序值 |
+| `active_skin_id` | 当前实际生效皮肤 ID；配置不可用时会返回 `classic` |
+| `configured_skin_id` | 当前保存的皮肤 ID；可能因为皮肤不可用而与 `active_skin_id` 不同 |
+| `active_skin` | 当前实际生效皮肤对象 |
+| `active_skin_asset_hash` | 当前皮肤 CSS 资源版本，用于刷新 `/assets/active-skin.css` |
 | `forward_channels` | 当前启用的转发渠道 |
-| `forward_check_interval_minutes` | 转发检查间隔 |
+| `forward_check_interval_seconds` | 转发轮询间隔秒数 |
+| `forward_check_interval_minutes` | 兼容旧客户端的转发检查间隔分钟数 |
+| `forward_execution_mode` | 转发执行模式，`serial` 或 `parallel` |
+| `forward_parallel_workers` | 并行模式 worker 数 |
+| `forward_account_delay_seconds` | 串行模式下账号间隔秒数；并行模式返回 `0` |
 | `forward_email_window_minutes` | 转发时间窗口 |
 | `forward_include_junkemail` | 是否转发垃圾箱 |
 | `email_forward_recipient` | SMTP 转发收件人 |
@@ -2001,6 +2116,7 @@ POST /api/cloudflare/channels
 | `app_timezone` | string | 系统时区，使用 IANA 时区名，例如 `Asia/Shanghai` |
 | `show_account_created_at` | bool | 是否在邮箱列表展示创建时间 |
 | `show_account_sort_order` | bool | 是否在邮箱列表展示自定义排序值 |
+| `active_skin_id` | string | 当前系统级外观皮肤 ID；所有登录设备共用同一设置 |
 | `external_api_key` | string | 对外 API Key，可传空字符串清空 |
 | `normal_mail_local_retention_enabled` | bool/string | 是否启用普通邮箱本地保留；通过 `/api/settings` 更新会同步刷新后端进程内读取缓存 |
 | `normal_mail_local_retention_auto_show_new_mail` | bool/string | 是否在本地保留后台同步发现新邮件后自动合并展示；默认关闭 |
@@ -2025,10 +2141,14 @@ POST /api/cloudflare/channels
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `forward_check_interval_minutes` | int | 轮询间隔，范围 `1-60` |
+| `forward_check_interval_seconds` | int | 轮询间隔秒数，范围 `20-3600` |
+| `forward_check_interval_minutes` | int | 兼容旧客户端的轮询间隔分钟数，范围 `1-60`；未同时传 seconds 时会同步写入秒级配置 |
+| `forward_execution_mode` | string | `serial` 或 `parallel`；保存为 `parallel` 时账号间隔会归零 |
+| `forward_parallel_workers` | int | 并行模式 worker 数，范围 `1-10` |
+| `forward_account_delay_seconds` | int | 串行模式下账号间隔，范围 `0-60`；并行模式会保存为 `0` |
 | `forward_email_window_minutes` | int | 转发邮件时间范围，范围 `0-10080`，`0` 表示不限制 |
 | `forward_include_junkemail` | bool | 是否把垃圾箱邮件也纳入转发轮询 |
-| `forward_channels` | array<string> | `smtp` / `telegram` |
+| `forward_channels` | array<string> | `smtp` / `telegram` / `wecom` |
 | `email_forward_recipient` | string | SMTP 转发收件人 |
 | `smtp_host` | string | SMTP 主机 |
 | `smtp_port` | int | SMTP 端口 |
@@ -2045,12 +2165,192 @@ POST /api/cloudflare/channels
 
 ```json
 {
-  "forward_check_interval_minutes": 5,
+  "forward_check_interval_seconds": 20,
+  "forward_execution_mode": "parallel",
+  "forward_parallel_workers": 4,
+  "forward_account_delay_seconds": 0,
   "forward_email_window_minutes": 30,
   "forward_include_junkemail": true,
   "smtp_provider": "outlook",
   "forward_channels": ["smtp", "telegram"]
 }
+```
+
+### GET `/api/skins`
+
+获取系统级外观皮肤列表、当前配置值和当前实际生效皮肤。该接口要求已登录。
+
+成功响应示例：
+
+```json
+{
+  "success": true,
+  "configured_skin_id": "midnight-sample",
+  "active_skin_id": "midnight-sample",
+  "asset_hash": "a1b2c3d4e5f6a7b8",
+  "active_skin": {
+    "id": "midnight-sample",
+    "name": "Midnight Sample",
+    "version": "1.0.0",
+    "source_type": "upload",
+    "builtin": false,
+    "active": true,
+    "status": "ok",
+    "asset_hash": "a1b2c3d4e5f6a7b8",
+    "last_error": ""
+  },
+  "skins": []
+}
+```
+
+字段说明：
+
+| 字段 | 说明 |
+| --- | --- |
+| `configured_skin_id` | `settings` 表中保存的皮肤 ID |
+| `active_skin_id` | 当前实际生效的皮肤 ID；配置不可用时会回退为 `classic` |
+| `asset_hash` | 当前皮肤 CSS 版本，可作为 `/assets/active-skin.css?v=...` 参数 |
+| `skins` | 已安装皮肤列表，始终包含内置 `classic` |
+
+皮肤对象常见字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `id` | 皮肤 ID |
+| `name` | 显示名称 |
+| `version` | 版本 |
+| `description` | 描述 |
+| `source_type` | `builtin`、`upload` 或 `git` |
+| `builtin` | 是否内置皮肤 |
+| `active` | 是否当前实际生效 |
+| `status` | `ok` 或 `invalid` |
+| `last_error` | 最近一次校验或读取错误 |
+| `git_url` | Git 来源地址，仅 Git 来源皮肤返回 |
+| `git_ref` | Git ref，仅 Git 来源皮肤返回 |
+
+### POST `/api/skins/<skin_id>/activate`
+
+启用指定皮肤。该设置是系统级设置，保存后所有登录设备都会使用同一当前皮肤。
+
+成功响应示例：
+
+```json
+{
+  "success": true,
+  "message": "皮肤已启用",
+  "active_skin": {
+    "id": "classic",
+    "source_type": "builtin",
+    "active": false,
+    "status": "ok"
+  },
+  "asset_hash": "classic"
+}
+```
+
+失败时常见错误：
+
+- `皮肤 ID 无效`
+- `皮肤不存在`
+- `皮肤不可用`
+
+也可以通过 `PUT /api/settings` 提交 `active_skin_id` 达到同样效果。
+
+### POST `/api/skins/upload`
+
+上传 zip 皮肤包。表单字段名支持 `skin` 或 `file`。
+
+请求示例：
+
+```bash
+curl -X POST \
+  -H "X-CSRFToken: <csrf-token>" \
+  -b "session=<session-cookie>" \
+  -F "skin=@skin.zip" \
+  "http://localhost:5000/api/skins/upload"
+```
+
+成功响应示例：
+
+```json
+{
+  "success": true,
+  "message": "皮肤已安装",
+  "skin": {
+    "id": "midnight-sample",
+    "name": "Midnight Sample",
+    "version": "1.0.0",
+    "source_type": "upload",
+    "status": "ok"
+  }
+}
+```
+
+格式要求见 [`docs/skins.md`](skins.md)。上传失败不会改变当前启用皮肤。
+
+### POST `/api/skins/git/install`
+
+从 Git 仓库安装皮肤。仓库根目录必须包含 `skin.json` 和 CSS 入口文件。
+
+请求示例：
+
+```json
+{
+  "git_url": "https://github.com/user/outlook-skin.git",
+  "git_ref": "main"
+}
+```
+
+说明：
+
+- `git_url` 必填。
+- `git_ref` 可选，可以是分支、tag 或其他 `git clone --branch` 可解析的 ref。
+- 运行环境必须安装 `git`。
+- 私有仓库凭据没有专门管理入口，不建议把凭据直接写进多人可见的 URL。
+
+成功响应与上传接口一致。安装失败不会改变当前启用皮肤。
+
+### POST `/api/skins/<skin_id>/git/update`
+
+更新已安装的 Git 来源皮肤。服务端会使用该皮肤保存的 `git_url` 和 `git_ref` 重新拉取，并要求更新后的 `skin.json.id` 与原皮肤 ID 一致。
+
+成功响应示例：
+
+```json
+{
+  "success": true,
+  "message": "Git 皮肤已更新",
+  "skin": {
+    "id": "midnight-sample",
+    "source_type": "git",
+    "status": "ok"
+  }
+}
+```
+
+更新失败时不会覆盖现有皮肤文件。
+
+### DELETE `/api/skins/<skin_id>`
+
+删除未启用的自定义皮肤。不能删除内置 `classic`，也不能直接删除当前启用的皮肤；需要先切换到其他皮肤或 `classic`。
+
+成功响应示例：
+
+```json
+{
+  "success": true,
+  "message": "皮肤已删除"
+}
+```
+
+### GET `/assets/active-skin.css`
+
+返回当前实际生效皮肤的 CSS。该资源用于页面加载，不要求 Session；配置不可用或 CSS 读取失败时返回空的 classic fallback CSS。
+
+客户端可使用 `GET /api/skins` 或 `GET /api/settings` 返回的 `asset_hash` / `active_skin_asset_hash` 作为查询参数刷新缓存：
+
+```txt
+/assets/active-skin.css?v=<asset_hash>
 ```
 
 ### GET `/api/settings/normal-mail-retention/status`

@@ -145,6 +145,18 @@
                 width: min(300px, 84vw);
             }
 
+            #collapseGroupPanelBtn,
+            #expandGroupPanelBtn {
+                display: none !important;
+            }
+
+            .group-panel-collapsed .group-panel.show {
+                width: min(300px, 84vw) !important;
+                opacity: 1 !important;
+                pointer-events: auto !important;
+                border-right: 1px solid #e5e5e5 !important;
+            }
+
             .account-panel {
                 width: min(380px, 92vw);
             }
@@ -340,9 +352,10 @@
             }
 
             .refresh-btn {
-                min-height: 36px;
-                padding: 0 12px;
-                font-size: 12px;
+                width: 34px;
+                height: 34px;
+                min-height: auto;
+                padding: 0;
                 border-radius: 9px;
             }
 
@@ -459,23 +472,11 @@
                 flex: 0 0 auto;
             }
 
-            .email-detail-action-btn::before,
-            .email-trust-toggle::before {
-                font-size: 16px;
-                line-height: 1;
+            .email-detail-action-btn .btn-icon,
+            .email-trust-toggle .btn-icon {
+                width: 16px;
+                height: 16px;
                 color: #475569;
-            }
-
-            .email-detail-action-btn--back::before {
-                content: '←';
-            }
-
-            .email-detail-action-btn--fullscreen::before {
-                content: '⤢';
-            }
-
-            .email-detail-action-btn--delete::before {
-                content: '🗑';
             }
 
             .email-detail-action-btn__text {
@@ -490,10 +491,6 @@
                 margin-left: 0 !important;
                 gap: 0;
                 position: relative;
-            }
-
-            .email-trust-toggle::before {
-                content: '🛡';
             }
 
             .email-trust-toggle input {
@@ -512,9 +509,10 @@
                 background: #eff6ff;
             }
 
-            .email-trust-toggle.is-active::before {
+            .email-trust-toggle.is-active .btn-icon {
                 color: #1d4ed8;
             }
+
 
             .email-detail-toolbar-spacer {
                 flex: 1 1 auto;
@@ -740,6 +738,14 @@
             .modal-footer .btn {
                 min-height: 44px;
                 flex: 1 1 140px;
+            }
+
+            .skin-card {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .skin-card__actions {
+                justify-content: flex-start;
             }
 
             .toast {
