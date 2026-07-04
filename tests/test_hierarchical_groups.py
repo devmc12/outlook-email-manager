@@ -243,6 +243,8 @@ class HierarchicalGroupTests(unittest.TestCase):
         self.assertIn('function renderGroupTree', groups_js)
         self.assertIn('GROUP_COLLAPSED_STORAGE_PREFIX', groups_js)
         self.assertIn('parent_id: parentId', groups_js)
+        self.assertIn('title="${groupTitle}"', groups_js)
+        self.assertIn('class="group-name" title="${groupTitle}"', groups_js)
         self.assertIn('id="groupParentSelect"', dialogs_html)
         self.assertIn('.group-item.level-3', layout_css)
         self.assertIn('const isMovable = !isSystem && !isDefault', groups_js)

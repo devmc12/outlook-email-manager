@@ -2265,6 +2265,9 @@ class FrontendGroupPanelCollapseTests(unittest.TestCase):
         self.assertIn('id="groupPanelExpandHandle"', layout_html)
         self.assertIn('aria-label="展开分组面板"', layout_html)
         self.assertIn('onclick="expandGroupPanel()" hidden', layout_html)
+        self.assertIn('id="groupPanelResizeHandle"', layout_html)
+        self.assertIn('aria-label="调整分组栏宽度"', layout_html)
+        self.assertIn('role="separator"', layout_html)
         self.assertLess(layout_html.index('id="groupPanel"'), layout_html.index('id="groupPanelCollapseHandle"'))
         self.assertLess(layout_html.index('id="groupPanelCollapseHandle"'), layout_html.index('id="groupPanelExpandHandle"'))
 
@@ -2272,17 +2275,20 @@ class FrontendGroupPanelCollapseTests(unittest.TestCase):
         layout_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '03-layout.css').read_text(encoding='utf-8')
         responsive_css = pathlib.Path(ROOT_DIR, 'static', 'css', 'index', '08-responsive.css').read_text(encoding='utf-8')
 
-        self.assertIn('--group-panel-width: 200px;', layout_css)
+        self.assertIn('--group-panel-width: 240px;', layout_css)
         self.assertIn('@media (min-width: 769px)', layout_css)
         self.assertIn('.group-panel:hover + .group-panel-collapse-handle', layout_css)
+        self.assertIn('.group-panel-resize-handle {', layout_css)
+        self.assertIn('cursor: col-resize;', layout_css)
+        self.assertIn('left: calc(var(--group-panel-width) - 3px);', layout_css)
         self.assertIn('.main-container.is-group-panel-collapsed .group-panel', layout_css)
         self.assertIn('left: calc(var(--group-panel-width) - 1px);', layout_css)
         self.assertIn('width: 13px;', layout_css)
         self.assertIn('width: 0;', layout_css)
         self.assertIn('border-right-width: 0;', layout_css)
         self.assertIn('.group-panel-expand-handle[hidden]', layout_css)
-        self.assertIn('--group-panel-width: 180px;', responsive_css)
-        self.assertIn('--group-panel-width: 160px;', responsive_css)
+        self.assertIn('--group-panel-width: 220px;', responsive_css)
+        self.assertIn('--group-panel-width: 200px;', responsive_css)
         self.assertIn('width: var(--group-panel-width);', responsive_css)
         self.assertLess(
             layout_css.index('.group-panel-collapse-handle {'),
@@ -2301,6 +2307,10 @@ class FrontendGroupPanelCollapseTests(unittest.TestCase):
         self.assertIn('function syncGroupPanelCollapseFromStorage()', core_js)
         self.assertIn('function collapseGroupPanel()', core_js)
         self.assertIn('function expandGroupPanel()', core_js)
+        self.assertIn("GROUP_PANEL_WIDTH_STORAGE_KEY = 'outlook_group_panel_width'", core_js)
+        self.assertIn('function initGroupPanelResize()', core_js)
+        self.assertIn('function handleGroupPanelResizeStart(event)', core_js)
+        self.assertIn('function syncGroupPanelWidthAfterViewportChange()', core_js)
         self.assertIn('window.collapseGroupPanel = collapseGroupPanel;', core_js)
         self.assertIn('window.expandGroupPanel = expandGroupPanel;', core_js)
         self.assertIn("mainContainer?.classList.toggle('is-group-panel-collapsed', shouldCollapse);", core_js)
@@ -2308,6 +2318,7 @@ class FrontendGroupPanelCollapseTests(unittest.TestCase):
         self.assertIn('expandHandle.hidden = !shouldCollapse;', core_js)
         self.assertIn('syncGroupPanelCollapseFromStorage();', core_js)
         self.assertIn('initGroupPanelCollapse();', init_block)
+        self.assertIn('initGroupPanelResize();', init_block)
 
 
 class FrontendAccountSearchScopeTests(unittest.TestCase):

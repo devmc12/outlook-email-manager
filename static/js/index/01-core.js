@@ -55,6 +55,10 @@
         const DOCKER_UPDATE_REQUEST_TIMEOUT_MS = 20000;
         const UPDATE_NOTICE_SEEN_VERSION_KEY = 'outlook_update_notice_seen_latest_version';
         const GROUP_PANEL_COLLAPSED_STORAGE_KEY = 'outlook_group_panel_collapsed';
+        const GROUP_PANEL_WIDTH_STORAGE_KEY = 'outlook_group_panel_width';
+        const GROUP_PANEL_DEFAULT_WIDTH = 240;
+        const GROUP_PANEL_MIN_WIDTH = 180;
+        const GROUP_PANEL_MAX_WIDTH = 420;
         const VERIFICATION_CODE_COPY_STORAGE_KEY = 'outlook_verification_code_copy_enabled';
         const DEFAULT_APP_TIME_ZONE = 'Asia/Shanghai';
         const FALLBACK_APP_TIME_ZONES = [
@@ -78,6 +82,13 @@
         let normalMailLocalRetentionEnabled = false;
         let normalMailLocalRetentionAutoShowNewMail = false;
         let verificationCodeCopyEnabled = readStoredVerificationCodeCopyEnabled();
+        let groupPanelResizeState = {
+            active: false,
+            pointerId: null,
+            startX: 0,
+            startWidth: GROUP_PANEL_DEFAULT_WIDTH,
+            currentWidth: GROUP_PANEL_DEFAULT_WIDTH
+        };
 
         function isUntaggedTagFilterValue(value) {
             return String(value || '').trim() === UNTAGGED_TAG_FILTER_KEY;
@@ -125,6 +136,180 @@
             } catch (error) {
                 // localStorage may be unavailable in restricted browser contexts.
             }
+        }
+
+        function getGroupPanelWidthBounds() {
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth || GROUP_PANEL_MAX_WIDTH;
+            const viewportMaxWidth = viewportWidth - 520;
+            const maxWidth = Math.max(
+                GROUP_PANEL_MIN_WIDTH,
+                Math.min(GROUP_PANEL_MAX_WIDTH, viewportMaxWidth > 0 ? viewportMaxWidth : GROUP_PANEL_MAX_WIDTH)
+            );
+            return {
+                min: GROUP_PANEL_MIN_WIDTH,
+                max: maxWidth
+            };
+        }
+
+        function clampGroupPanelWidth(width) {
+            const numericWidth = Number(width);
+            const bounds = getGroupPanelWidthBounds();
+            if (!Number.isFinite(numericWidth)) {
+                return GROUP_PANEL_DEFAULT_WIDTH;
+            }
+            return Math.min(bounds.max, Math.max(bounds.min, Math.round(numericWidth)));
+        }
+
+        function readStoredGroupPanelWidth() {
+            try {
+                const storedWidth = Number.parseInt(localStorage.getItem(GROUP_PANEL_WIDTH_STORAGE_KEY) || '', 10);
+                return Number.isFinite(storedWidth) ? clampGroupPanelWidth(storedWidth) : null;
+            } catch (error) {
+                return null;
+            }
+        }
+
+        function storeGroupPanelWidth(width) {
+            try {
+                localStorage.setItem(GROUP_PANEL_WIDTH_STORAGE_KEY, String(clampGroupPanelWidth(width)));
+            } catch (error) {
+                // localStorage may be unavailable in restricted browser contexts.
+            }
+        }
+
+        function updateGroupPanelResizeHandle(width) {
+            const handle = document.getElementById('groupPanelResizeHandle');
+            if (!handle) return;
+
+            const bounds = getGroupPanelWidthBounds();
+            const currentWidth = clampGroupPanelWidth(width);
+            handle.setAttribute('aria-valuemin', String(bounds.min));
+            handle.setAttribute('aria-valuemax', String(bounds.max));
+            handle.setAttribute('aria-valuenow', String(currentWidth));
+        }
+
+        function applyGroupPanelWidth(width, persist = true) {
+            if (isMobileLayout()) {
+                return;
+            }
+
+            const mainContainer = document.querySelector('.main-container');
+            const nextWidth = clampGroupPanelWidth(width);
+            if (mainContainer) {
+                mainContainer.style.setProperty('--group-panel-width', `${nextWidth}px`);
+            }
+            groupPanelResizeState.currentWidth = nextWidth;
+            updateGroupPanelResizeHandle(nextWidth);
+
+            if (persist) {
+                storeGroupPanelWidth(nextWidth);
+                scheduleEmailListLoadCheck(160);
+            }
+        }
+
+        function getCurrentGroupPanelWidth() {
+            const groupPanel = document.getElementById('groupPanel');
+            const measuredWidth = groupPanel?.getBoundingClientRect().width || 0;
+            return clampGroupPanelWidth(measuredWidth || groupPanelResizeState.currentWidth);
+        }
+
+        function handleGroupPanelResizeStart(event) {
+            if (isMobileLayout() || (event.button !== undefined && event.button !== 0)) {
+                return;
+            }
+
+            const mainContainer = document.querySelector('.main-container');
+            if (mainContainer?.classList.contains('is-group-panel-collapsed')
+                || document.body.classList.contains('group-panel-collapsed')) {
+                return;
+            }
+
+            const handle = event.currentTarget;
+            groupPanelResizeState = {
+                active: true,
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startWidth: getCurrentGroupPanelWidth(),
+                currentWidth: getCurrentGroupPanelWidth()
+            };
+            document.body.classList.add('is-group-panel-resizing');
+            handle?.setPointerCapture?.(event.pointerId);
+            event.preventDefault();
+        }
+
+        function handleGroupPanelResizeMove(event) {
+            if (!groupPanelResizeState.active || event.pointerId !== groupPanelResizeState.pointerId) {
+                return;
+            }
+
+            const nextWidth = groupPanelResizeState.startWidth + (event.clientX - groupPanelResizeState.startX);
+            applyGroupPanelWidth(nextWidth, false);
+            event.preventDefault();
+        }
+
+        function handleGroupPanelResizeEnd(event) {
+            if (!groupPanelResizeState.active || event.pointerId !== groupPanelResizeState.pointerId) {
+                return;
+            }
+
+            const handle = event.currentTarget;
+            groupPanelResizeState.active = false;
+            document.body.classList.remove('is-group-panel-resizing');
+            if (handle?.hasPointerCapture?.(event.pointerId)) {
+                handle.releasePointerCapture(event.pointerId);
+            }
+            storeGroupPanelWidth(groupPanelResizeState.currentWidth);
+            scheduleEmailListLoadCheck(180);
+        }
+
+        function handleGroupPanelResizeKeydown(event) {
+            if (isMobileLayout()) {
+                return;
+            }
+
+            const bounds = getGroupPanelWidthBounds();
+            const currentWidth = getCurrentGroupPanelWidth();
+            const step = event.shiftKey ? 40 : 16;
+            let nextWidth = null;
+
+            if (event.key === 'ArrowLeft') {
+                nextWidth = currentWidth - step;
+            } else if (event.key === 'ArrowRight') {
+                nextWidth = currentWidth + step;
+            } else if (event.key === 'Home') {
+                nextWidth = bounds.min;
+            } else if (event.key === 'End') {
+                nextWidth = bounds.max;
+            }
+
+            if (nextWidth !== null) {
+                applyGroupPanelWidth(nextWidth);
+                event.preventDefault();
+            }
+        }
+
+        function syncGroupPanelWidthFromStorage() {
+            const storedWidth = readStoredGroupPanelWidth();
+            if (storedWidth !== null) {
+                applyGroupPanelWidth(storedWidth, false);
+            } else {
+                document.querySelector('.main-container')?.style.removeProperty('--group-panel-width');
+                updateGroupPanelResizeHandle(getCurrentGroupPanelWidth());
+            }
+        }
+
+        function syncGroupPanelWidthAfterViewportChange() {
+            if (isMobileLayout()) {
+                return;
+            }
+            const storedWidth = readStoredGroupPanelWidth();
+            if (storedWidth !== null) {
+                applyGroupPanelWidth(storedWidth, false);
+                return;
+            }
+
+            document.querySelector('.main-container')?.style.removeProperty('--group-panel-width');
+            updateGroupPanelResizeHandle(getCurrentGroupPanelWidth());
         }
 
         function readStoredVerificationCodeCopyEnabled() {
@@ -218,6 +403,22 @@
 
         function initGroupPanelCollapse() {
             syncGroupPanelCollapseFromStorage();
+        }
+
+        function initGroupPanelResize() {
+            const handle = document.getElementById('groupPanelResizeHandle');
+            if (!handle || handle.dataset.resizeBound === 'true') {
+                syncGroupPanelWidthFromStorage();
+                return;
+            }
+
+            handle.dataset.resizeBound = 'true';
+            handle.addEventListener('pointerdown', handleGroupPanelResizeStart);
+            handle.addEventListener('pointermove', handleGroupPanelResizeMove);
+            handle.addEventListener('pointerup', handleGroupPanelResizeEnd);
+            handle.addEventListener('pointercancel', handleGroupPanelResizeEnd);
+            handle.addEventListener('keydown', handleGroupPanelResizeKeydown);
+            syncGroupPanelWidthFromStorage();
         }
 
         function isValidAppTimeZone(timeZone) {
@@ -1280,6 +1481,7 @@
             document.addEventListener('click', handleGlobalTagFilterClick);
             document.addEventListener('click', handleGlobalImportTagClick);
             initGroupPanelCollapse();
+            initGroupPanelResize();
             document.addEventListener('click', handleGlobalEditTagClick);
             
             // Dropdown menu click handling (for batch actions and navbar settings)
@@ -1342,7 +1544,10 @@
             });
             window.addEventListener('resize', function () {
                 clearTimeout(responsiveUiResizeTimer);
-                responsiveUiResizeTimer = window.setTimeout(syncResponsiveUI, 120);
+                responsiveUiResizeTimer = window.setTimeout(function () {
+                    syncResponsiveUI();
+                    syncGroupPanelWidthAfterViewportChange();
+                }, 120);
             });
             document.addEventListener('keydown', function (event) {
                 if (event.key === 'Escape') {

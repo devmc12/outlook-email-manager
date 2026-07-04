@@ -6,6 +6,12 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.7.0+2] - 2026-07-04
+
+### Added
+- 分组栏默认宽度增加 40px，并支持在桌面端拖动右侧边缘调整宽度；调整后的宽度会保存在浏览器本地。
+- 分组列表项和分组名称新增 `title` 提示，同时收紧层级缩进和行内间距，减少长分组名称被挤出可视区域的问题。
+
 ## [2.7.0+1] - 2026-07-04
 
 ### Fixed

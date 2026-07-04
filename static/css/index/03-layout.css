@@ -1,6 +1,6 @@
         /* 主容器 */
         .main-container {
-            --group-panel-width: 200px;
+            --group-panel-width: 240px;
             display: flex;
             position: relative;
             margin-top: 56px;
@@ -88,7 +88,8 @@
         }
 
         .group-panel-collapse-handle,
-        .group-panel-expand-handle {
+        .group-panel-expand-handle,
+        .group-panel-resize-handle {
             display: none;
         }
 
@@ -164,6 +165,42 @@
                 outline: none;
             }
 
+            .group-panel-resize-handle {
+                display: block;
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: calc(var(--group-panel-width) - 3px);
+                width: 6px;
+                cursor: col-resize;
+                z-index: 124;
+                touch-action: none;
+            }
+
+            .group-panel-resize-handle::after {
+                content: '';
+                position: absolute;
+                top: 64px;
+                bottom: 14px;
+                left: 50%;
+                width: 2px;
+                border-radius: 999px;
+                background: #2563eb;
+                opacity: 0;
+                transform: translateX(-50%);
+                transition: opacity 0.15s ease;
+            }
+
+            .group-panel-resize-handle:hover::after,
+            .group-panel-resize-handle:focus-visible::after,
+            body.is-group-panel-resizing .group-panel-resize-handle::after {
+                opacity: 0.45;
+            }
+
+            .group-panel-resize-handle:focus-visible {
+                outline: none;
+            }
+
             .group-panel-expand-handle {
                 display: inline-flex;
                 position: fixed;
@@ -203,6 +240,12 @@
                 opacity: 0;
                 pointer-events: none;
             }
+
+            .main-container.is-group-panel-collapsed .group-panel-resize-handle,
+            .group-panel-collapsed .group-panel-resize-handle {
+                opacity: 0;
+                pointer-events: none;
+            }
         }
 
         @media (prefers-reduced-motion: reduce) and (min-width: 769px) {
@@ -210,9 +253,23 @@
             .group-panel > .panel-header,
             .group-panel > .group-list,
             .group-panel-collapse-handle,
-            .group-panel-expand-handle {
+            .group-panel-expand-handle,
+            .group-panel-resize-handle::after {
                 transition: none;
             }
+        }
+
+        body.is-group-panel-resizing {
+            cursor: col-resize;
+            user-select: none;
+        }
+
+        body.is-group-panel-resizing .group-panel,
+        body.is-group-panel-resizing .group-panel > .panel-header,
+        body.is-group-panel-resizing .group-panel > .group-list,
+        body.is-group-panel-resizing .group-panel-collapse-handle,
+        body.is-group-panel-resizing .group-panel-resize-handle {
+            transition: none !important;
         }
 
         .panel-header {
@@ -306,22 +363,22 @@
         }
 
         .group-item {
-            padding: 10px 16px 10px 10px;
+            padding: 10px 12px 10px 8px;
             cursor: pointer;
             transition: background-color 0.15s;
             border-left: 3px solid transparent;
         }
 
         .group-item.level-1 {
-            padding-left: 10px;
+            padding-left: 8px;
         }
 
         .group-item.level-2 {
-            padding-left: 22px;
+            padding-left: 18px;
         }
 
         .group-item.level-3 {
-            padding-left: 34px;
+            padding-left: 28px;
         }
 
         .group-item.draggable {
@@ -364,8 +421,9 @@
         .group-row-1 {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 8px;
             position: relative;
+            min-width: 0;
         }
 
         .group-row-1:not(:last-child) {
@@ -416,6 +474,7 @@
             text-overflow: ellipsis;
             white-space: nowrap;
             flex: 1;
+            min-width: 0;
         }
 
         .group-row-2 {
@@ -441,6 +500,7 @@
             padding: 2px 8px;
             border-radius: 10px;
             transition: opacity 0.15s;
+            flex: 0 0 auto;
         }
 
         .group-item.active .group-count {
