@@ -2779,10 +2779,9 @@ ${details}
                 return;
             }
 
-            const badgeText = formatGroupIdBadgeText(group.id);
-            nameEl.textContent = normalizeGroupName(group.name);
-            idBadgeEl.textContent = badgeText;
-            idBadgeEl.style.display = badgeText ? 'inline-flex' : 'none';
+            nameEl.textContent = '';
+            idBadgeEl.textContent = '';
+            idBadgeEl.style.display = 'none';
         }
 
         // ------------------ 折叠分组栏 & 极简模式 ------------------
@@ -2878,10 +2877,12 @@ ${details}
                 refreshBtn.disabled = true;
             }
             try {
-                if (window.isTempEmailGroup && typeof window.loadTempEmails === 'function') {
-                    await window.loadTempEmails(true);
-                } else if (window.currentGroupId && typeof window.loadAccountsByGroup === 'function') {
-                    await window.loadAccountsByGroup(window.currentGroupId, true);
+                if (typeof refreshVisibleAccountList === 'function') {
+                    await refreshVisibleAccountList(true);
+                } else if (isTempEmailGroup && typeof loadTempEmails === 'function') {
+                    await loadTempEmails(true);
+                } else if (currentGroupId && typeof loadAccountsByGroup === 'function') {
+                    await loadAccountsByGroup(currentGroupId, true);
                 }
             } catch (e) {
                 console.error(e);

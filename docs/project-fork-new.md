@@ -1,5 +1,20 @@
 # Project Fork New
 
+## upstream/main 438d93a - merge upstream 2.8.0-2.8.2
+
+本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.8.0`、`2.8.1`、`2.8.2`，并处理账号筛选范围与 fork 取信状态筛选功能重叠产生的冲突。
+
+- 同步 Outlook 自动化授权界面升级：支持 `Outlook IMAP` 与 `Graph-only` 双授权模式、顶部内联添加、表格行内编辑、已授权账号重新授权，以及内嵌授权日志。
+- 同步 OAuth Scope 修复与登录失败检测优化，IMAP 授权会申请 `IMAP.AccessAsUser.All`，Graph token fallback 使用独立 Graph scope。
+- 同步 Outlook 授权账号标签展示、密码显示切换、表格列宽与操作区稳定性优化。
+- 同步账号密码查看流程调整：账号详情直接返回已保存密码，移除二次验证端点，并在查看账号详情时记录 `view_account_detail` 审计日志。
+- 同步 Windows `start.bat` / `start.ps1`、Docker 本地源码构建说明、API 与安全文档更新，并按上游清理过时 OAuth 和项目设计文档。
+- 上游新增“所有分组”下标签筛选，和 fork 的“所有分组”下取信状态筛选存在功能重叠；合并后统一使用 `hasAccountServerSideFilters()` 和通用跨分组请求判断，同时覆盖标签、无标签和取信状态。
+- 保留 fork 原有用户流程：取信状态折叠入口、搜索范围选择、账号卡所属分组展示、“所有分组”标题、加载更多、刷新与清空搜索后的范围均保持一致。
+- 保留 fork 的分组栏拖拽调宽、宽度持久化和移动端 drawer 行为，同时吸收上游分组折叠、标题与排序交互优化。
+- 处理 `CHANGELOG.md` 冲突：上游 `2.8.2`、`2.8.1`、`2.8.0` 按日期排在 fork `2.7.0+3`、`2.7.0+2`、`2.7.0+1` 之前，双方记录均保留。
+- 验证：核心前端脚本通过 `node --check`，相关功能测试通过 `258 passed, 3 subtests passed`，全量 `python -m pytest -q` 通过 `484 passed, 10 subtests passed`。
+
 ## fix: honor all groups for mail access status filter
 
 本次修复账号列表取信状态筛选的分组范围问题，避免选择“所有分组”后仍然只在当前选中分组内过滤。

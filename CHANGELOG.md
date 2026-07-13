@@ -6,6 +6,61 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-07-10
+
+### Changed
+- 账号详情接口 `GET /api/accounts/<id>` 现在直接返回明文 `password` 和 `imap_password` 字段，移除了二次验证流程，前端小眼睛按钮直接在掩码与明文间切换。
+- 移除了 `/api/accounts/<id>/secrets` 二次验证端点及其前端验证弹窗，简化密码查看流程。
+- 账号详情查看时新增 `view_account_detail` 审计日志记录，确保密码字段访问可追溯。
+- OAuth 重新授权弹窗密码字段改为掩码显示+小眼睛切换+点击复制，与编辑账号弹窗密码展示方式一致。
+- 浏览器扩展编辑账号弹窗直接回显已保存的明文密码，移除了"需在 Web 端验证后查看"占位提示。
+- `.secret-reveal-btn` 按钮样式统一为 24×24px 居中对齐，与 Outlook 上传账号密码切换按钮保持一致。
+
+### Fixed
+- 修复重新授权时密码未传入会额外请求账号详情获取密码的回退逻辑。
+
+## [2.8.1] - 2026-07-07
+
+### Added
+- Outlook 自动化授权上传账号表格新增正式账号标签展示，并支持在管理端表格中切换显示/隐藏已保存密码。
+- 新增 Windows `start.bat` / `start.ps1` 本地启动脚本和项目协作说明。
+
+### Changed
+- 手动 OAuth 助手调整为只请求 Outlook IMAP 单资源权限，Graph token fallback 改用独立 Graph scope，避免 Microsoft OAuth v2 跨资源混用报错。
+- 优化 Outlook 自动化授权账号表格的列宽、按钮文案、编辑态和授权操作布局稳定性。
+- 上传账号列表接口会向已登录管理端返回解密后的 `password` 字段，用于前端表格显示切换；新增/修改响应仍不返回明文密码。
+- `SECRET_KEY` 环境变量读取时会忽略首尾空白，并同步 README 配置说明。
+- 清理过时 OAuth 与项目设计文档，保留当前 API 与安全说明。
+
+### Fixed
+- 修复手动 OAuth 授权链接和授权码换 token 请求可能混入 Graph scope 的问题。
+- 修复 Outlook 自动化授权账号表格在标签、密码和操作列下的显示抖动问题。
+
+## [2.8.0] - 2026-07-06
+
+### Added
+- Outlook 自动化授权弹窗支持 `Outlook IMAP` 与 `Graph-only` 双模式授权，并将授权日志内嵌到上传账号管理面板右侧。
+- 上传账号管理支持顶部内联添加、表格行内编辑和已授权账号重新授权入口。
+- 分组面板新增折叠、搜索标题和排序交互优化。
+- README 与 Docker 配置补充本地源码构建运行说明。
+
+### Changed
+- OAuth 授权 Scope 新增 `https://outlook.office.com/IMAP.AccessAsUser.All` 权限，用于让 IMAP 授权模式获取 IMAP 访问能力。
+- Outlook 上传账号列表接口不再返回明文密码，前端列表只显示密码是否已保存。
+- 修改 Outlook 上传账号的邮箱或密码时会将 `is_authorized` 重置为 `0`；仅修改备注不会改变授权状态。
+- Graph 授权模式文案调整为 `Graph-only`，并明确提示不含 IMAP 权限。
+- 优化上传账号表格列宽、按钮显示、授权日志高度与滚动样式。
+
+### Fixed
+- 修复 OAuth 授权后导出的 RefreshToken 无法用于 IMAP 获取邮件的问题（授权时未申请 IMAP 权限）。
+- 修复 Graph OAuth 登录失败检测不稳定的问题。
+- 修复上传账号列表曾可能向前端返回并展示明文密码的问题。
+
+### Security
+- Outlook 上传账号暂存密码继续加密保留在后端，列表 API、前端表格和授权日志均不返回、不展示明文密码。
+
+**重要提示**: 已授权的账号需要重新授权才能获得 IMAP 访问权限；`Graph-only` 模式不含 IMAP 权限，如需 IMAP 访问请选择 `Outlook IMAP` 授权模式。
+
 ## [2.7.0+3] - 2026-07-04
 
 ### Fixed

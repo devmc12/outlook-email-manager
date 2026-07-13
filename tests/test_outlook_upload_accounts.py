@@ -1,5 +1,6 @@
 import importlib
 import os
+import pathlib
 import tempfile
 import unittest
 
@@ -13,6 +14,7 @@ if 'DATABASE_PATH' not in os.environ:
     os.environ['DATABASE_PATH'] = os.path.join(_temp_dir, 'test.db')
 
 web_outlook_app = importlib.import_module('web_outlook_app')
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 
 
 class OutlookUploadSchemaTests(unittest.TestCase):
@@ -137,6 +139,42 @@ class OutlookUploadDataLayerTests(unittest.TestCase):
                          ['added', 'duplicate', 'invalid'])
         self.assertEqual([r['email'] for r in summary['results']],
                          ['new1@outlook.com', 'exists@outlook.com', 'bad'])
+
+    def test_query_upload_accounts_page_includes_matching_formal_account_tags(self):
+        email = 'tagged-upload@outlook.com'
+        formal_email = 'Tagged-Upload@Outlook.com'
+        tag_names = {'自动授权', '重点'}
+
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                'DELETE FROM account_tags WHERE account_id IN (SELECT id FROM accounts WHERE LOWER(email) = ?)',
+                (email,),
+            )
+            db.execute('DELETE FROM accounts WHERE LOWER(email) = ?', (email,))
+            db.execute(
+                'DELETE FROM account_tags WHERE tag_id IN (SELECT id FROM tags WHERE name IN (?, ?))',
+                tuple(tag_names),
+            )
+            db.execute(
+                'DELETE FROM tags WHERE name IN (?, ?)',
+                tuple(tag_names),
+            )
+            db.commit()
+
+            self.assertTrue(web_outlook_app.add_account(formal_email, 'formal-password'))
+            account = web_outlook_app.get_account_by_email(email)
+            for name in tag_names:
+                tag_id = web_outlook_app.add_tag(name, '#0078d4')
+                self.assertIsNotNone(tag_id)
+                self.assertTrue(web_outlook_app.add_account_tag(account['id'], tag_id))
+            web_outlook_app.add_upload_account(email, 'upload-password', 'from formal account')
+            db.commit()
+
+            result = web_outlook_app.query_upload_accounts_page(page=1, page_size=10)
+
+        item = next(item for item in result['items'] if item['email'] == email)
+        self.assertCountEqual([tag['name'] for tag in item['tags']], tag_names)
 
 
 class OutlookUploadRequeueTests(unittest.TestCase):
@@ -321,7 +359,7 @@ class OutlookUploadRouteTests(unittest.TestCase):
         self.assertNotEqual(row['password'], 'secret')
         self.assertEqual(web_outlook_app.decrypt_data(row['password']), 'secret')
 
-    def test_list_upload_accounts_masks_password(self):
+    def test_list_upload_accounts_returns_password_for_table_reveal(self):
         with self.app.app_context():
             web_outlook_app.add_upload_account('list@outlook.com', 'secret', 'n')
             web_outlook_app.get_db().commit()
@@ -333,7 +371,7 @@ class OutlookUploadRouteTests(unittest.TestCase):
         payload = response.get_json()
         self.assertTrue(payload['success'])
         item = next(item for item in payload['items'] if item['email'] == 'list@outlook.com')
-        self.assertNotIn('password', item)
+        self.assertEqual(item['password'], 'secret')
         self.assertTrue(item['has_password'])
         self.assertEqual(item['password_length'], len('secret'))
 
@@ -355,6 +393,7 @@ class OutlookUploadRouteTests(unittest.TestCase):
         self.assertTrue(payload['success'])
         items = {item['email']: item for item in payload['items']}
         self.assertTrue(items['good@outlook.com']['has_password'])
+        self.assertEqual(items['good@outlook.com']['password'], 'secret')
         self.assertFalse(items['bad@outlook.com']['has_password'])
         self.assertEqual(items['bad@outlook.com']['password_length'], 0)
 
@@ -385,6 +424,221 @@ class OutlookUploadRouteTests(unittest.TestCase):
     def test_route_is_marked_api_key_required(self):
         view = self.app.view_functions['api_external_upload_outlook']
         self.assertTrue(getattr(view, '_requires_api_key', False))
+
+
+class OutlookUploadFrontendStructureTests(unittest.TestCase):
+    def test_upload_accounts_table_does_not_show_id_column(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertNotIn('<th style="width: 42px; min-width: 42px;">ID</th>', html)
+        self.assertIn('<td colspan="7" class="upload-accounts-empty">正在加载...</td>', html)
+        self.assertIn('<tr class="upload-accounts-row--editing" data-editing-id="${escapeHtml(String(itemId))}">', js)
+        self.assertNotIn('<td>${escapeHtml(String(itemId))}</td>', js)
+        self.assertIn('<tr><td colspan="7" class="upload-accounts-empty">暂无数据</td></tr>', js)
+        self.assertIn('<tr><td colspan="7" class="upload-accounts-empty">正在加载...</td></tr>', js)
+
+    def test_upload_accounts_table_shows_tags_column(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('<th style="width: 120px; min-width: 100px;">标签</th>', html)
+        self.assertIn('function formatUploadAccountTags(tags)', js)
+        self.assertIn('<td>${formatUploadAccountTags(item.tags)}</td>', js)
+
+    def test_upload_accounts_table_alignment_rules(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('text-align: center;', html)
+        self.assertIn('.upload-accounts-cell-right', html)
+        self.assertIn('text-align: right;', html)
+        self.assertIn('justify-content: center;', html)
+        self.assertIn('<td class="upload-accounts-cell-mono upload-accounts-cell-right">', js)
+        self.assertIn('<td class="upload-accounts-cell-right">', js)
+
+    def test_upload_accounts_table_reserves_space_during_pagination_loading(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+
+        table_wrap_css = html.split('.upload-accounts-table-wrap {', 1)[1].split('}', 1)[0]
+        table_css = html.split('.upload-accounts-table {', 1)[1].split('}', 1)[0]
+
+        self.assertIn('min-height: 410px;', table_wrap_css)
+        self.assertIn('table-layout: fixed;', table_css)
+        self.assertIn('min-width: 912px;', table_css)
+
+    def test_table_password_uses_eye_toggle(self):
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('toggleUploadAccountPasswordVisibility', js)
+        self.assertIn('data-upload-account-password', js)
+        self.assertIn('upload-accounts-password-mask', js)
+        self.assertIn('aria-label="显示密码"', js)
+        self.assertIn("'隐藏密码'", js)
+        self.assertNotIn('<td class="upload-accounts-cell-mono">${escapeHtml(formatUploadAccountPassword(item))}</td>', js)
+
+    def test_table_password_reveal_does_not_inline_password_in_graph_auth_button(self):
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        auth_button_start = js.index('const authBtn =')
+        auth_button_end = js.index('const editBtn =', auth_button_start)
+        auth_button_js = js[auth_button_start:auth_button_end]
+        self.assertNotIn('data-upload-account-password', auth_button_js)
+        self.assertNotIn('item.password ||', auth_button_js)
+
+
+class OutlookUploadUpdateRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.app = web_outlook_app.app
+        self.app.config['TESTING'] = True
+        self.app.config['WTF_CSRF_ENABLED'] = False
+        self.client = self.app.test_client()
+        with self.app.app_context():
+            web_outlook_app.init_db()
+            db = web_outlook_app.get_db()
+            db.execute('DELETE FROM outlook_upload_accounts')
+            db.commit()
+        with self.client.session_transaction() as session:
+            session['logged_in'] = True
+
+    def _seed(self, email='edit@outlook.com', password='oldpw', remark='old'):
+        with self.app.app_context():
+            result = web_outlook_app.add_upload_account(email, password, remark)
+            web_outlook_app.get_db().commit()
+        return result['id']
+
+    def test_update_changes_email_password_and_remark(self):
+        account_id = self._seed()
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'email': 'new@outlook.com', 'password': 'newpw', 'remark': 'updated'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                "SELECT email, password, remark FROM outlook_upload_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        self.assertEqual(row['email'], 'new@outlook.com')
+        self.assertEqual(web_outlook_app.decrypt_data(row['password']), 'newpw')
+        self.assertEqual(row['remark'], 'updated')
+
+    def test_update_email_resets_authorized_status(self):
+        account_id = self._seed()
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                "UPDATE outlook_upload_accounts SET is_authorized = 1 WHERE id = ?",
+                (account_id,),
+            )
+            db.commit()
+
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'email': 'changed@outlook.com'},
+        )
+        self.assertEqual(response.status_code, 200)
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                "SELECT is_authorized FROM outlook_upload_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        self.assertEqual(row['is_authorized'], 0)
+
+    def test_update_password_resets_authorized_status(self):
+        account_id = self._seed()
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                "UPDATE outlook_upload_accounts SET is_authorized = 1 WHERE id = ?",
+                (account_id,),
+            )
+            db.commit()
+
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'password': 'new-secret'},
+        )
+        self.assertEqual(response.status_code, 200)
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                "SELECT is_authorized, password FROM outlook_upload_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        self.assertEqual(row['is_authorized'], 0)
+        self.assertEqual(web_outlook_app.decrypt_data(row['password']), 'new-secret')
+
+    def test_update_remark_only_keeps_authorized_status(self):
+        account_id = self._seed()
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            db.execute(
+                "UPDATE outlook_upload_accounts SET is_authorized = 1 WHERE id = ?",
+                (account_id,),
+            )
+            db.commit()
+
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'remark': 'remark-only'},
+        )
+        self.assertEqual(response.status_code, 200)
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                "SELECT is_authorized, remark FROM outlook_upload_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        self.assertEqual(row['is_authorized'], 1)
+        self.assertEqual(row['remark'], 'remark-only')
+
+    def test_update_keeps_password_when_omitted_or_empty(self):
+        account_id = self._seed(password='keepme')
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'email': 'edit@outlook.com', 'remark': 'r'},
+        )
+        self.assertEqual(response.status_code, 200)
+        response2 = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'email': 'edit@outlook.com', 'password': '', 'remark': 'r'},
+        )
+        self.assertEqual(response2.status_code, 200)
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                "SELECT password FROM outlook_upload_accounts WHERE id = ?",
+                (account_id,),
+            ).fetchone()
+        self.assertEqual(web_outlook_app.decrypt_data(row['password']), 'keepme')
+
+    def test_update_duplicate_email_returns_400(self):
+        self._seed(email='a@outlook.com')
+        account_id_b = self._seed(email='b@outlook.com')
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id_b}',
+            json={'email': 'a@outlook.com'},
+        )
+        self.assertEqual(response.status_code, 400)
+        body = response.get_json()
+        self.assertFalse(body['success'])
+        self.assertIn('已存在', body['error'])
+
+    def test_update_invalid_email_returns_400(self):
+        account_id = self._seed()
+        response = self.client.put(
+            f'/api/outlook-upload-accounts/{account_id}',
+            json={'email': 'no-at-sign'},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_update_not_found_returns_404(self):
+        response = self.client.put(
+            '/api/outlook-upload-accounts/99999',
+            json={'email': 'x@outlook.com'},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(response.get_json()['success'])
 
 
 if __name__ == '__main__':

@@ -1,6 +1,8 @@
 # 多邮箱邮件管理工具
 
 一个面向多邮箱账号场景的邮件管理工具，支持通过 Outlook/Hotmail OAuth、Microsoft Graph API 和标准 IMAP 统一读取、管理和转发邮件，并提供 Web 界面、Chrome/Edge 浏览器扩展，用于分组管理、账号管理、邮件查看和对外 API 调用。当前支持 Outlook/Hotmail、Gmail、QQ、163、126、Yahoo、阿里邮箱以及自定义 IMAP 邮箱，同时集成 GPTMail、DuckMail、Cloudflare Temp Email 多提供商临时邮箱能力。
+
+注意：改密码会导致auth失效，需要重新授权
 ## 📦 快速开始
 ### 体验站点（可能非最新版本）
 https://aso.de5.net
@@ -71,6 +73,8 @@ export SECRET_KEY=your-secret-key-here
 python web_outlook_app.py
 ```
 
+python -m pip install -r requirements.txt; $env:SECRET_KEY = (& python -c "import secrets; print(secrets.token_hex(32))")[0]; $env:HOST="127.0.0.1"; python web_outlook_app.py
+
 访问 `http://localhost:5000` 即可使用。
 如果是服务器部署，仍然建议显式设置固定 `SECRET_KEY`。
 
@@ -136,6 +140,62 @@ services:
       # - OAUTH_REDIRECT_URI=http://localhost:8080
     restart: unless-stopped
 ```
+
+### 方式五：本地源码构建并运行（docker-compose.build.yml）
+
+适合在本机基于源码自行构建镜像（而非拉取 `ghcr.io` 上的预构建镜像）后运行，便于本地改动后立即验证。
+
+仓库根目录已提供 `docker-compose.build.yml`，它会用根目录的 `Dockerfile` 从源码构建镜像并启动容器。
+
+#### 步骤 1：准备环境变量文件 `.env.local`
+
+`docker-compose.build.yml` 通过 `env_file: .env.local` 注入环境变量，该文件**不存在时 Compose 会直接报错拒绝启动**，需先从模板复制并修改：
+
+```bash
+cp .env.example .env.local
+```
+
+至少修改以下两项：
+
+```bash
+# 生成随机串后填入 .env.local 的 SECRET_KEY
+python -c 'import secrets; print(secrets.token_hex(32))'
+```
+
+- `SECRET_KEY`：填入上面生成的随机串（务必修改，勿用占位值；首尾空白会被忽略）
+- `LOGIN_PASSWORD`：登录密码，默认 `admin123`，建议改为强密码
+
+可选：如需调整 Gunicorn 线程数 / 超时，在 `.env.local` 中追加 `GUNICORN_THREADS`、`GUNICORN_TIMEOUT`（不填则使用默认值 4 / 300）。
+
+#### 步骤 2：构建并启动
+
+```bash
+docker compose -f docker-compose.build.yml up -d --build
+```
+
+- `--build` 强制从源码重新构建镜像（镜像标签为 `outlookemail:local`）
+- 容器名为 `outlook-mail`，映射端口 `5000:5000`
+- 数据持久化在宿主机 `./data`；`./static`、`./templates` 以只读方式挂载，便于本地编辑模板/静态资源实时生效
+
+启动后访问 `http://localhost:5000`，使用 `.env.local` 中的 `LOGIN_PASSWORD` 登录。
+
+#### 步骤 3：常用运维命令
+
+```bash
+# 查看日志
+docker compose -f docker-compose.build.yml logs -f
+
+# 查看健康检查与状态
+docker compose -f docker-compose.build.yml ps
+
+# 改动源码后重新构建并重启
+docker compose -f docker-compose.build.yml up -d --build
+
+# 停止并移除容器（数据仍保留在 ./data）
+docker compose -f docker-compose.build.yml down
+```
+
+> 提示：`docker-compose.build.yml` 默认未挂载宿主机 Docker socket，因此界面里的「Docker 在线更新」不可用——本地构建场景请直接用上面的 `up -d --build` 重新构建来更新。
 
 ## ✨ 功能特性
 
@@ -275,12 +335,12 @@ Web 应用采用四栏式布局设计：
 
 #### 步骤 4：配置 API 权限  这一步应该可以省略，目前内置的客户端id就没有设置这一步也能正常使用
 
-在「API 权限」中添加以下权限：
+手动 OAuth 助手默认只请求 Outlook IMAP 单资源权限，避免 Microsoft OAuth v2 在同一次授权中混用 Graph 和 Outlook 资源时报 `AADSTS70011`：
 - `offline_access` - 获取刷新令牌
-- `Mail.Read` - 读取邮件
-- `Mail.ReadWrite` - 读写邮件
-- `User.Read` - 读取用户信息
 - `IMAP.AccessAsUser.All` - IMAP 访问
+
+如果需要单独测试 Graph 授权，再为 Graph 流程配置 `Mail.Read` / `Mail.ReadWrite` / `User.Read`，不要和 `IMAP.AccessAsUser.All` 放在同一次手动授权链接里。
+
 #### 步骤 5：获取 Refresh Token
 
 使用本工具内置的 OAuth2 助手获取 Refresh Token：
