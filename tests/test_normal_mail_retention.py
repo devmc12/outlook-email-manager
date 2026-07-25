@@ -1797,7 +1797,11 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'false',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph', return_value=graph_detail) as detail_mock, \
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': True, 'detail': graph_detail},
+        ) as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=attachments) as attachments_mock:
             response = self.client.get(
                 '/api/email/retained@example.com/graph-detail-1?method=graph&folder=inbox&id_mode=graph'
@@ -1827,7 +1831,11 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'true',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph', return_value=graph_detail) as detail_mock, \
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': True, 'detail': graph_detail},
+        ) as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=attachments) as attachments_mock:
             response = self.client.get(
                 '/api/email/retained@example.com/graph-detail-1?method=graph&folder=inbox&id_mode=graph'
@@ -1855,7 +1863,11 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'true',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph', return_value=graph_detail) as detail_mock, \
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': True, 'detail': graph_detail},
+        ) as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=attachments) as attachments_mock:
             response = self.client.get(
                 '/api/email/retained@example.com/graph-detail-1'
@@ -1885,7 +1897,11 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'false',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph', return_value=graph_detail) as detail_mock, \
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': True, 'detail': graph_detail},
+        ) as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=[]) as attachments_mock:
             response = self.client.get(
                 '/api/email/retained@example.com/cached-detail-1'
@@ -1909,8 +1925,8 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'true',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph') as graph_mock, \
-             patch.object(web_outlook_app, 'get_email_detail_imap') as oauth_imap_mock, \
+        with patch.object(web_outlook_app, 'get_email_detail_graph_result') as graph_mock, \
+             patch.object(web_outlook_app, 'get_email_detail_imap_result') as oauth_imap_mock, \
              patch.object(web_outlook_app, 'get_email_detail_imap_generic_result') as generic_imap_mock:
             graph_mock.side_effect = AssertionError('Graph detail helper should not be called')
             oauth_imap_mock.side_effect = AssertionError('OAuth IMAP detail helper should not be called')
@@ -1950,7 +1966,11 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'true',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph', return_value=graph_detail) as detail_mock, \
+        with patch.object(
+            web_outlook_app,
+            'get_email_detail_graph_result',
+            return_value={'success': True, 'detail': graph_detail},
+        ) as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=attachments) as attachments_mock:
             response = self.client.get(
                 '/api/email/retained@example.com/graph-detail-1'
@@ -1978,8 +1998,8 @@ class NormalMailRetentionTests(unittest.TestCase):
                 'true',
             ))
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph') as graph_mock, \
-             patch.object(web_outlook_app, 'get_email_detail_imap') as oauth_imap_mock, \
+        with patch.object(web_outlook_app, 'get_email_detail_graph_result') as graph_mock, \
+             patch.object(web_outlook_app, 'get_email_detail_imap_result') as oauth_imap_mock, \
              patch.object(web_outlook_app, 'get_email_detail_imap_generic_result') as generic_imap_mock:
             graph_mock.side_effect = AssertionError('Graph detail helper should not be called')
             oauth_imap_mock.side_effect = AssertionError('OAuth IMAP detail helper should not be called')
@@ -2010,7 +2030,7 @@ class NormalMailRetentionTests(unittest.TestCase):
             ))
             web_outlook_app.upsert_retained_normal_mail_list_items(self.account, 'inbox', items)
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph') as detail_mock, \
+        with patch.object(web_outlook_app, 'get_email_detail_graph_result') as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph') as attachments_mock:
             response = self.client.post(
                 '/api/emails/retain-bodies',
@@ -2048,17 +2068,20 @@ class NormalMailRetentionTests(unittest.TestCase):
 
         def graph_detail(client_id, refresh_token, message_id, proxy_url, fallback_proxy_urls):
             return {
-                'id': message_id,
-                'subject': f'Detail {message_id}',
-                'from': {'emailAddress': {'address': f'{message_id}@example.com'}},
-                'toRecipients': [{'emailAddress': {'address': 'reader@example.com'}}],
-                'ccRecipients': [],
-                'receivedDateTime': '2026-05-27T05:00:00Z',
-                'hasAttachments': False,
-                'body': {'contentType': 'html', 'content': f'<p>Body {message_id}</p>'},
+                'success': True,
+                'detail': {
+                    'id': message_id,
+                    'subject': f'Detail {message_id}',
+                    'from': {'emailAddress': {'address': f'{message_id}@example.com'}},
+                    'toRecipients': [{'emailAddress': {'address': 'reader@example.com'}}],
+                    'ccRecipients': [],
+                    'receivedDateTime': '2026-05-27T05:00:00Z',
+                    'hasAttachments': False,
+                    'body': {'contentType': 'html', 'content': f'<p>Body {message_id}</p>'},
+                },
             }
 
-        with patch.object(web_outlook_app, 'get_email_detail_graph', side_effect=graph_detail) as detail_mock, \
+        with patch.object(web_outlook_app, 'get_email_detail_graph_result', side_effect=graph_detail) as detail_mock, \
              patch.object(web_outlook_app, 'get_email_attachments_graph', return_value=[]) as attachments_mock:
             response = self.client.post(
                 '/api/emails/retain-bodies',

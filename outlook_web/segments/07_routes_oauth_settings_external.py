@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import time
 
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 if TYPE_CHECKING:
     # These segmented files are executed into the shared `web_outlook_app`
@@ -672,6 +672,7 @@ def api_get_settings():
     settings['smtp_use_ssl'] = get_setting('smtp_use_ssl', 'true')
     settings['telegram_bot_token'] = get_setting_decrypted('telegram_bot_token', '')
     settings['telegram_chat_id'] = get_setting('telegram_chat_id', '')
+    settings['telegram_topic_id'] = get_setting('telegram_topic_id', '')
     settings['telegram_proxy_url'] = get_setting('telegram_proxy_url', '')
     settings['wecom_webhook_url'] = get_setting_decrypted('wecom_webhook_url', '')
     settings['webdav_backup_enabled'] = get_setting('webdav_backup_enabled', 'false')
@@ -735,19 +736,26 @@ def api_update_settings():
             if cron_error:
                 return jsonify({'success': False, 'error': cron_error})
 
-    # 更新登录密码
+    # 更新登录密码：必须验证当前密码；成功后轮换会话版本，使其他已登录会话失效
     if 'login_password' in data:
-        new_password = data['login_password'].strip()
+        new_password = str(data.get('login_password') or '').strip()
         if new_password:
             if len(new_password) < 8:
-                errors.append('密码长度至少为 8 位')
-            else:
-                # 哈希新密码
-                hashed_password = hash_password(new_password)
-                if set_setting('login_password', hashed_password):
-                    updated.append('登录密码')
-                else:
-                    errors.append('更新登录密码失败')
+                return jsonify({'success': False, 'error': '密码长度至少为 8 位'})
+            current_password = str(data.get('current_login_password') or '')
+            if not current_password:
+                return jsonify({'success': False, 'error': '修改登录密码需要验证当前密码'})
+            if not verify_login_password(current_password):
+                return jsonify({'success': False, 'error': '当前登录密码错误'})
+            hashed_password = hash_password(new_password)
+            if not set_setting('login_password', hashed_password):
+                return jsonify({'success': False, 'error': '更新登录密码失败'})
+            new_session_version = rotate_login_session_version()
+            # 当前改密会话继续有效，其余旧会话在下次请求时失效
+            session['logged_in'] = True
+            session.permanent = True
+            bind_login_session_version(new_session_version)
+            updated.append('登录密码')
 
     # 更新 GPTMail API Key
     if 'gptmail_api_key' in data:
@@ -1204,6 +1212,12 @@ def api_update_settings():
         else:
             errors.append('保存 Telegram Chat ID 失败')
 
+    if 'telegram_topic_id' in data:
+        if set_setting('telegram_topic_id', data['telegram_topic_id'].strip()):
+            updated.append('Telegram Topic ID')
+        else:
+            errors.append('保存 Telegram Topic ID 失败')
+
     if 'telegram_proxy_url' in data:
         if set_setting('telegram_proxy_url', data['telegram_proxy_url'].strip()):
             updated.append('Telegram 代理')
@@ -1480,9 +1494,19 @@ def api_external_upload_outlook():
 def api_list_outlook_upload_accounts():
     """分页查询外部上传的 Outlook 账号，供前端弹框表格展示。"""
     page = parse_non_negative_int(request.args.get('page', 1), 1) or 1
-    page_size = parse_non_negative_int(request.args.get('page_size', 20), 20, 200)
+    page_size = parse_non_negative_int(
+        request.args.get('page_size', UPLOAD_ACCOUNTS_API_DEFAULT_PAGE_SIZE),
+        UPLOAD_ACCOUNTS_API_DEFAULT_PAGE_SIZE,
+        UPLOAD_ACCOUNTS_MAX_PAGE_SIZE,
+    )
     keyword = str(request.args.get('keyword', '') or '').strip()
-    result = query_upload_accounts_page(page=page, page_size=page_size, keyword=keyword)
+    auth_status = str(request.args.get('auth_status', 'all') or 'all').strip().lower()
+    result = query_upload_accounts_page(
+        page=page,
+        page_size=page_size,
+        keyword=keyword,
+        auth_status=auth_status,
+    )
     return jsonify({'success': True, **result})
 
 
@@ -1494,13 +1518,23 @@ def api_add_outlook_upload_account():
     email = str(data.get('email', '') or '').strip()
     password = str(data.get('password', '') or '').strip()
     remark = str(data.get('remark', '') or '').strip()
+    group_id = data.get('group_id')
+    proxy_url = str(data.get('proxy_url', '') or '').strip()
+    tag_ids = data.get('tag_ids')
 
     if not email:
         return jsonify({'success': False, 'error': '邮箱不能为空'}), 400
     if not password:
         return jsonify({'success': False, 'error': '密码不能为空'}), 400
 
-    result = add_upload_account(email, password, remark)
+    result = add_upload_account(
+        email,
+        password,
+        remark,
+        group_id=group_id,
+        proxy_url=proxy_url,
+        tag_ids=tag_ids,
+    )
     db = get_db()
     db.commit()
 
@@ -1564,6 +1598,86 @@ def api_delete_outlook_upload_account(account_id):
         return jsonify({'success': False, 'error': '账号不存在'}), 404
 
 
+@app.route('/api/outlook-upload-accounts/batch-delete', methods=['POST'])
+@login_required
+def api_batch_delete_outlook_upload_accounts():
+    """批量删除 Outlook 上传账号。"""
+    data = request.get_json(silent=True) or {}
+    account_ids = normalize_account_ids(data.get('account_ids') or [])
+    if not account_ids:
+        return jsonify({'success': False, 'error': '请选择要删除的账号'}), 400
+
+    summary = delete_upload_accounts_bulk(account_ids)
+    get_db().commit()
+    return jsonify({
+        'success': True,
+        'message': f"已删除 {summary['deleted']} 个账号",
+        **summary,
+    })
+
+
+def _queue_formal_account_for_auto_auth(account_id: int) -> Dict[str, Any]:
+    """将单个正式账号加入自动授权队列；返回结果字典（含 success）。"""
+    account = get_account_by_id(account_id)
+    if not account:
+        return {
+            'success': False,
+            'account_id': account_id,
+            'error': '账号不存在',
+            'error_code': 'ACCOUNT_NOT_FOUND',
+        }
+
+    account_type = str(account.get('account_type') or 'outlook').lower()
+    if account_type == 'imap':
+        return {
+            'success': False,
+            'account_id': account_id,
+            'email': str(account.get('email') or ''),
+            'error': 'IMAP 账号不支持加入 Outlook 自动化授权',
+            'error_code': 'ACCOUNT_AUTO_AUTH_UNSUPPORTED',
+        }
+
+    email = str(account.get('email') or '').strip()
+    password = str(account.get('password') or '').strip()
+    if not email or not password:
+        return {
+            'success': False,
+            'account_id': account_id,
+            'email': email,
+            'error': '账号密码为空或无法解密，请先在编辑中设置密码',
+            'error_code': 'ACCOUNT_PASSWORD_MISSING',
+        }
+
+    remark = str(account.get('remark') or '').strip()
+    group_id = account.get('group_id') or DEFAULT_GROUP_ID
+    proxy_url = str(account.get('proxy_url') or '').strip()
+    tag_ids = [tag.get('id') for tag in get_account_tags(account_id)]
+    result = upsert_upload_account_for_auto_auth(
+        email,
+        password,
+        remark,
+        group_id=group_id,
+        proxy_url=proxy_url,
+        tag_ids=tag_ids,
+    )
+    if result['status'] == 'invalid':
+        return {
+            'success': False,
+            'account_id': account_id,
+            'email': email,
+            'error': '邮箱或密码无效，无法加入自动授权',
+            'error_code': 'ACCOUNT_AUTO_AUTH_INVALID',
+        }
+
+    return {
+        'success': True,
+        'account_id': account_id,
+        'upload_account_id': result['id'],
+        'email': result['email'],
+        'status': result['status'],
+    }
+
+
 @app.route('/api/accounts/<int:account_id>/outlook-auto-auth', methods=['POST'])
 @login_required
 def api_queue_account_for_outlook_auto_auth(account_id):
@@ -1572,66 +1686,60 @@ def api_queue_account_for_outlook_auto_auth(account_id):
     从服务端读取正式账号邮箱和密码，调用显式重新入队 helper 写入
     outlook_upload_accounts。不返回密码。
     """
-    account = get_account_by_id(account_id)
-    if not account:
+    result = _queue_formal_account_for_auto_auth(account_id)
+    if not result.get('success'):
+        error_code = result.get('error_code') or 'ACCOUNT_AUTO_AUTH_FAILED'
+        status_code = 404 if error_code == 'ACCOUNT_NOT_FOUND' else 400
         return jsonify({
             'success': False,
             'error': build_error_payload(
-                'ACCOUNT_NOT_FOUND',
-                '账号不存在',
-                'NotFoundError',
-                404,
-                f'account_id={account_id}',
+                error_code,
+                result.get('error') or '加入自动授权失败',
+                'NotFoundError' if status_code == 404 else 'ValidationError',
+                status_code,
+                f"account_id={account_id}",
             ),
-        }), 404
-
-    account_type = str(account.get('account_type') or 'outlook').lower()
-    if account_type == 'imap':
-        return jsonify({
-            'success': False,
-            'error': build_error_payload(
-                'ACCOUNT_AUTO_AUTH_UNSUPPORTED',
-                'IMAP 账号不支持加入 Outlook 自动化授权',
-                'UnsupportedError',
-                400,
-                f'account_id={account_id} type=imap',
-            ),
-        }), 400
-
-    email = str(account.get('email') or '').strip()
-    password = str(account.get('password') or '').strip()
-    if not email or not password:
-        return jsonify({
-            'success': False,
-            'error': build_error_payload(
-                'ACCOUNT_PASSWORD_MISSING',
-                '账号密码为空或无法解密，请先在编辑中设置密码',
-                'ValidationError',
-                400,
-                f'account_id={account_id}',
-            ),
-        }), 400
-
-    remark = str(account.get('remark') or '').strip()
-    result = upsert_upload_account_for_auto_auth(email, password, remark)
-    if result['status'] == 'invalid':
-        return jsonify({
-            'success': False,
-            'error': build_error_payload(
-                'ACCOUNT_AUTO_AUTH_INVALID',
-                '邮箱或密码无效，无法加入自动授权',
-                'ValidationError',
-                400,
-                f'account_id={account_id}',
-            ),
-        }), 400
+        }), status_code
 
     get_db().commit()
-
     return jsonify({
         'success': True,
         'message': '已加入自动授权' if result['status'] == 'added' else '已重新加入自动授权',
-        'upload_account_id': result['id'],
+        'upload_account_id': result['upload_account_id'],
         'email': result['email'],
         'status': result['status'],
+    })
+
+
+@app.route('/api/accounts/batch-outlook-auto-auth', methods=['POST'])
+@login_required
+def api_batch_queue_accounts_for_outlook_auto_auth():
+    """批量将正式 Outlook 账号加入自动化授权队列。"""
+    data = request.get_json(silent=True) or {}
+    account_ids = normalize_account_ids(data.get('account_ids') or [])
+    if not account_ids:
+        return jsonify({'success': False, 'error': '请选择要加入自动授权的账号'}), 400
+
+    results: List[Dict[str, Any]] = []
+    added = updated = failed = 0
+    for account_id in account_ids:
+        outcome = _queue_formal_account_for_auto_auth(account_id)
+        results.append(outcome)
+        if not outcome.get('success'):
+            failed += 1
+            continue
+        if outcome.get('status') == 'updated':
+            updated += 1
+        else:
+            added += 1
+
+    get_db().commit()
+    return jsonify({
+        'success': True,
+        'message': f'已处理 {len(account_ids)} 个账号：新增 {added}，重新入队 {updated}，失败 {failed}',
+        'total': len(account_ids),
+        'added': added,
+        'updated': updated,
+        'failed': failed,
+        'results': results,
     })

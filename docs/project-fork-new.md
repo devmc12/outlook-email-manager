@@ -1,5 +1,19 @@
 # Project Fork New
 
+## upstream/main 6117724 - merge upstream 2.8.3-2.8.9
+
+本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.8.3` 至 `2.8.9`，并保留 fork 自定义功能的用户意图。
+
+- 同步 Outlook 上传账号增强：授权状态筛选、分页档位、分组/标签/代理展示、批量授权和代理列配置。
+- 同步 Telegram 转发可选 Topic ID（`message_thread_id`）配置。
+- 同步修改账号密码时验证当前密码并轮换登录会话，保留现有账号编辑和授权流程。
+- 同步邮件获取错误结构化处理：代理、超时、TLS、网络和协议错误可透传到前端，并补充 IMAP 网络错误有限重试。
+- 同步 `folder=all` 全部失败时的 Graph/IMAP 细节保留，以及邮件列表、详情页的错误详情展示和弹窗冷却控制。
+- 与 fork 的取信状态和错误展示存在功能重叠时，采用上游底层错误结构与重试逻辑，同时保留 fork 的账号级 `mail_access_status` 入库、状态筛选、查看错误入口和本地保留邮件列表语义。
+- 保留邮件转发匹配规则、附加分组、转发轮询入库、验证码复制、邮件内容搜索、分组栏调宽/折叠等 fork 功能及其交互流程。
+- 更新 `CHANGELOG.md` 和当前项目文档记录，保留上游版本条目与 fork 增量条目。
+- 验证：核心前端脚本通过 `node --check`，相关功能测试通过 `324 passed, 8 subtests passed`，全量 `python -m pytest -q` 通过 `538 passed, 15 subtests passed`。
+
 ## upstream/main 438d93a - merge upstream 2.8.0-2.8.2
 
 本次将原作者 `upstream/main` 合并到 `dev`，同步上游 `2.8.0`、`2.8.1`、`2.8.2`，并处理账号筛选范围与 fork 取信状态筛选功能重叠产生的冲突。

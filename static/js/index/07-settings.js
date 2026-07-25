@@ -1785,6 +1785,8 @@
                     document.getElementById('settingsCloudflareAiTestResult').textContent = '未测试';
                     document.getElementById('settingsAppTimezone').value = appTimeZone;
                     document.getElementById('settingsPassword').value = '';
+                    const currentPasswordInput = document.getElementById('settingsCurrentPassword');
+                    if (currentPasswordInput) currentPasswordInput.value = '';
 
                     document.getElementById('refreshIntervalDays').value = data.settings.refresh_interval_days || '30';
                     document.getElementById('refreshDelaySeconds').value = data.settings.refresh_delay_seconds || '5';
@@ -1823,6 +1825,7 @@
                     document.getElementById('settingsSmtpUseSsl').checked = String(data.settings.smtp_use_ssl) !== 'false';
                     document.getElementById('settingsTelegramBotToken').value = data.settings.telegram_bot_token || '';
                     document.getElementById('settingsTelegramChatId').value = data.settings.telegram_chat_id || '';
+                    document.getElementById('settingsTelegramTopicId').value = data.settings.telegram_topic_id || '';
                     document.getElementById('settingsTelegramProxyUrl').value = data.settings.telegram_proxy_url || '';
                     document.getElementById('settingsWecomWebhookUrl').value = data.settings.wecom_webhook_url || '';
                     document.getElementById('webdavBackupEnabled').checked = String(data.settings.webdav_backup_enabled) === 'true';
@@ -1851,6 +1854,7 @@
         async function saveSettings() {
             ensureForwardingSettingsUI();
             const password = document.getElementById('settingsPassword').value;
+            const currentPassword = document.getElementById('settingsCurrentPassword')?.value || '';
             const apiKey = document.getElementById('settingsApiKey').value.trim();
             const externalApiKey = document.getElementById('settingsExternalApiKey').value.trim();
             const refreshDays = document.getElementById('refreshIntervalDays').value;
@@ -1869,7 +1873,16 @@
             const forwardChannels = getSelectedForwardChannels();
 
             if (password) {
+                if (!currentPassword) {
+                    showToast('修改登录密码需要输入当前密码', 'error');
+                    return;
+                }
+                if (password.length < 8) {
+                    showToast('新登录密码长度至少为 8 位', 'error');
+                    return;
+                }
                 settings.login_password = password;
+                settings.current_login_password = currentPassword;
             }
 
             settings.gptmail_api_key = apiKey;
@@ -1910,6 +1923,7 @@
             const smtpUsername = document.getElementById('settingsSmtpUsername').value.trim();
             const telegramBotToken = document.getElementById('settingsTelegramBotToken').value.trim();
             const telegramChatId = document.getElementById('settingsTelegramChatId').value.trim();
+            const telegramTopicId = document.getElementById('settingsTelegramTopicId').value.trim();
             const telegramProxyUrl = document.getElementById('settingsTelegramProxyUrl').value.trim();
             const wecomWebhookUrl = document.getElementById('settingsWecomWebhookUrl').value.trim();
             const webdavBackupSettings = getWebdavBackupFormSettings();
@@ -1970,6 +1984,10 @@
             }
             if (forwardChannels.includes('telegram') && !telegramChatId) {
                 showToast('启用 TG 转发时必须填写 Telegram Chat ID', 'error');
+                return;
+            }
+            if (telegramTopicId && !/^\d+$/.test(telegramTopicId)) {
+                showToast('Telegram Topic ID 必须是纯数字', 'error');
                 return;
             }
             if (forwardChannels.includes('wecom') && !wecomWebhookUrl) {
@@ -2036,6 +2054,7 @@
             settings.smtp_use_ssl = document.getElementById('settingsSmtpUseSsl').checked;
             settings.telegram_bot_token = telegramBotToken;
             settings.telegram_chat_id = telegramChatId;
+            settings.telegram_topic_id = telegramTopicId;
             settings.telegram_proxy_url = telegramProxyUrl;
             settings.wecom_webhook_url = wecomWebhookUrl;
 
@@ -2129,7 +2148,15 @@
                 return;
             }
 
-            showToast('时间展示已生效，定时任务重启后生效', 'success');
+            document.getElementById('settingsPassword').value = '';
+            const currentPasswordInput = document.getElementById('settingsCurrentPassword');
+            if (currentPasswordInput) currentPasswordInput.value = '';
+
+            if (password) {
+                showToast('登录密码已更新，其他已登录设备需要重新登录', 'success');
+            } else {
+                showToast('时间展示已生效，定时任务重启后生效', 'success');
+            }
             hideSettingsModal();
         }
 
@@ -2151,6 +2178,7 @@
                 telegram: {
                     bot_token: document.getElementById('settingsTelegramBotToken').value.trim(),
                     chat_id: document.getElementById('settingsTelegramChatId').value.trim(),
+                    topic_id: document.getElementById('settingsTelegramTopicId').value.trim(),
                     proxy_url: document.getElementById('settingsTelegramProxyUrl').value.trim(),
                 },
                 wecom: {
@@ -2192,6 +2220,10 @@
                 }
                 if (!draft.telegram.chat_id) {
                     showToast('请先填写 Telegram Chat ID', 'error');
+                    return;
+                }
+                if (draft.telegram.topic_id && !/^\d+$/.test(draft.telegram.topic_id)) {
+                    showToast('Telegram Topic ID 必须是纯数字', 'error');
                     return;
                 }
             } else if (channel === 'wecom') {

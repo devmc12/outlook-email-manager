@@ -543,6 +543,92 @@ class GraphOauthRouteTests(unittest.TestCase):
         self.assertEqual(aliases, ['alias@example.com'])
         self.assertEqual(tags, ['业务标签'])
 
+    def test_stream_success_applies_upload_group_tags_proxy_only_when_creating(self):
+        """新建正式账号时应用 upload 的分组/标签/代理；已有账号不覆盖业务字段。"""
+        with self.app.app_context():
+            group_id = web_outlook_app.add_group('授权目标分组')
+            self.assertIsNotNone(group_id)
+            tag_id = web_outlook_app.add_tag('授权标签', '#789')
+            self.assertIsNotNone(tag_id)
+            created = web_outlook_app.add_upload_account(
+                'create-prefs@example.com',
+                'create-pwd',
+                'create note',
+                group_id=group_id,
+                proxy_url='socks5://create:1080',
+                tag_ids=[tag_id],
+            )
+            web_outlook_app.get_db().commit()
+            create_upload_id = created['id']
+
+            keep_group_id = web_outlook_app.add_group('保留分组')
+            self.assertIsNotNone(keep_group_id)
+            keep_tag_id = web_outlook_app.add_tag('保留标签', '#abc')
+            self.assertIsNotNone(keep_tag_id)
+            upload_tag_id = web_outlook_app.add_tag('不应覆盖标签', '#def')
+            self.assertIsNotNone(upload_tag_id)
+            existing_upload = web_outlook_app.add_upload_account(
+                'keep-prefs@example.com',
+                'keep-pwd',
+                'upload note',
+                group_id=group_id,
+                proxy_url='socks5://should-not-apply:1080',
+                tag_ids=[upload_tag_id],
+            )
+            self.assertTrue(web_outlook_app.add_account(
+                'keep-prefs@example.com',
+                'old-pwd',
+                'old-client',
+                'old-refresh',
+                group_id=keep_group_id,
+                remark='keep remark',
+                account_type='outlook',
+                provider='outlook',
+                proxy_url='socks5://keep:1080',
+                fallback_proxy_url_1='http://keep-fallback:7890',
+            ))
+            keep_account = web_outlook_app.get_account_by_email('keep-prefs@example.com')
+            self.assertTrue(web_outlook_app.add_account_tag(keep_account['id'], keep_tag_id))
+            web_outlook_app.get_db().commit()
+            keep_upload_id = existing_upload['id']
+
+        with patch.object(web_outlook_app, 'extract_graph_refresh_token', return_value={
+            'success': True,
+            'refresh_token': 'create-refresh',
+            'client_id': 'create-client',
+        }), patch.object(web_outlook_app, 'test_refresh_token', return_value=(True, None, '')):
+            _, create_events = self._consume_stream(self._start_graph_task(create_upload_id))
+        self.assertTrue(create_events[-1]['success'])
+
+        with patch.object(web_outlook_app, 'extract_graph_refresh_token', return_value={
+            'success': True,
+            'refresh_token': 'keep-refresh',
+            'client_id': 'keep-client',
+        }), patch.object(web_outlook_app, 'test_refresh_token', return_value=(True, None, '')):
+            _, keep_events = self._consume_stream(self._start_graph_task(keep_upload_id))
+        self.assertTrue(keep_events[-1]['success'])
+
+        with self.app.app_context():
+            created_account = web_outlook_app.get_account_by_email('create-prefs@example.com')
+            created_tags = [tag['id'] for tag in web_outlook_app.get_account_tags(created_account['id'])]
+            kept_account = web_outlook_app.get_account_by_email('keep-prefs@example.com')
+            kept_tags = [tag['id'] for tag in web_outlook_app.get_account_tags(kept_account['id'])]
+
+        self.assertEqual(created_account['group_id'], group_id)
+        self.assertEqual(created_account['proxy_url'], 'socks5://create:1080')
+        self.assertEqual(created_account['fallback_proxy_url_1'] or '', '')
+        self.assertEqual(created_account['fallback_proxy_url_2'] or '', '')
+        self.assertEqual(created_tags, [tag_id])
+
+        self.assertEqual(kept_account['group_id'], keep_group_id)
+        self.assertEqual(kept_account['proxy_url'], 'socks5://keep:1080')
+        self.assertEqual(kept_account['fallback_proxy_url_1'], 'http://keep-fallback:7890')
+        self.assertEqual(kept_account['remark'], 'keep remark')
+        self.assertEqual(kept_tags, [keep_tag_id])
+        self.assertEqual(kept_account['password'], 'keep-pwd')
+        self.assertEqual(kept_account['client_id'], 'keep-client')
+        self.assertEqual(kept_account['refresh_token'], 'keep-refresh')
+
     # --- Task 3.3: Token extraction failure does not overwrite ---
 
     def test_3_3_extraction_failure_does_not_overwrite_existing_formal_account(self):
@@ -634,6 +720,32 @@ class GraphOauthFrontendContractTests(unittest.TestCase):
         self.assertIn('Graph-only', html)
         self.assertIn('不含 IMAP 权限', html)
         self.assertIn('Graph-only（不含 IMAP 权限）', js)
+
+    def test_upload_accounts_modal_explains_four_auth_entry_points(self):
+        """Outlook邮箱授权弹窗提示批量导入 / 授权保存 / 重新授权入口及区别。"""
+        root = os.path.dirname(os.path.dirname(__file__))
+        with open(
+            os.path.join(root, 'templates/partials/index/dialogs-management.html'),
+            encoding='utf-8',
+        ) as handle:
+            html = handle.read()
+        with open(
+            os.path.join(root, 'static/js/index/12-outlook-upload-accounts.js'),
+            encoding='utf-8',
+        ) as handle:
+            js = handle.read()
+
+        self.assertIn('upload-accounts-guide', html)
+        self.assertIn('批量导入邮箱', html)
+        self.assertIn('授权并保存 Outlook 账号', html)
+        self.assertIn('重新授权并刷新', html)
+        self.assertIn('怎么选', html)
+        self.assertIn('openBatchImportFromUploadGuide', html)
+        self.assertIn('openOauthSaveFromUploadGuide', html)
+        self.assertIn('function openBatchImportFromUploadGuide', js)
+        self.assertIn('function openOauthSaveFromUploadGuide', js)
+        self.assertIn('showAddAccountModal', js)
+        self.assertIn('showGetRefreshTokenModal', js)
 
     def test_4_1_outlook_account_menu_has_auto_auth_imap_does_not(self):
         """Outlook 账号菜单包含"加入自动授权"，IMAP 账号不包含该入口。"""

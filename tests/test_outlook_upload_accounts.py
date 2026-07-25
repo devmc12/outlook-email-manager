@@ -17,6 +17,20 @@ web_outlook_app = importlib.import_module('web_outlook_app')
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 
 
+def clear_upload_management_fixtures(db):
+    group_names = ('上传目标分组', '路由目标分组')
+    tag_names = ('上传标签A', '上传标签B', '路由标签')
+    group_placeholders = ','.join('?' * len(group_names))
+    tag_placeholders = ','.join('?' * len(tag_names))
+    db.execute(
+        f'DELETE FROM account_tags WHERE tag_id IN '
+        f'(SELECT id FROM tags WHERE name IN ({tag_placeholders}))',
+        tag_names,
+    )
+    db.execute(f'DELETE FROM tags WHERE name IN ({tag_placeholders})', tag_names)
+    db.execute(f'DELETE FROM groups WHERE name IN ({group_placeholders})', group_names)
+
+
 class OutlookUploadSchemaTests(unittest.TestCase):
     def setUp(self):
         self.app = web_outlook_app.app
@@ -25,6 +39,7 @@ class OutlookUploadSchemaTests(unittest.TestCase):
             web_outlook_app.init_db()
             db = web_outlook_app.get_db()
             db.execute('DELETE FROM outlook_upload_accounts')
+            clear_upload_management_fixtures(db)
             db.commit()
 
     def test_table_exists_with_expected_columns_and_defaults(self):
@@ -35,7 +50,8 @@ class OutlookUploadSchemaTests(unittest.TestCase):
             ).fetchall()}
 
         for name in ['id', 'email', 'password', 'is_authorized',
-                     'status', 'remark', 'source', 'created_at', 'updated_at']:
+                     'status', 'remark', 'source', 'created_at', 'updated_at',
+                     'group_id', 'proxy_url', 'tag_ids']:
             self.assertIn(name, columns)
 
     def test_is_authorized_defaults_to_zero(self):
@@ -80,6 +96,7 @@ class OutlookUploadDataLayerTests(unittest.TestCase):
             web_outlook_app.init_db()
             db = web_outlook_app.get_db()
             db.execute('DELETE FROM outlook_upload_accounts')
+            clear_upload_management_fixtures(db)
             db.commit()
 
     def test_add_single_account_normalizes_and_persists_encrypted_password(self):
@@ -175,6 +192,196 @@ class OutlookUploadDataLayerTests(unittest.TestCase):
 
         item = next(item for item in result['items'] if item['email'] == email)
         self.assertCountEqual([tag['name'] for tag in item['tags']], tag_names)
+
+    def test_query_upload_accounts_filters_authorization_status(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            web_outlook_app.add_upload_account('pending@outlook.com', 'p1')
+            authorized = web_outlook_app.add_upload_account('authorized@outlook.com', 'p2')
+            db.execute(
+                'UPDATE outlook_upload_accounts SET is_authorized = 1 WHERE id = ?',
+                (authorized['id'],),
+            )
+            db.commit()
+
+            default_result = web_outlook_app.query_upload_accounts_page()
+            all_result = web_outlook_app.query_upload_accounts_page(auth_status='all')
+            unknown_result = web_outlook_app.query_upload_accounts_page(auth_status='unknown')
+            authorized_result = web_outlook_app.query_upload_accounts_page(auth_status='authorized')
+            unauthorized_result = web_outlook_app.query_upload_accounts_page(auth_status='unauthorized')
+
+        expected_all = {'pending@outlook.com', 'authorized@outlook.com'}
+        for result in (default_result, all_result, unknown_result):
+            self.assertEqual({item['email'] for item in result['items']}, expected_all)
+            self.assertEqual(result['total'], 2)
+        self.assertEqual(
+            [item['email'] for item in authorized_result['items']],
+            ['authorized@outlook.com'],
+        )
+        self.assertEqual(authorized_result['total'], 1)
+        self.assertEqual(
+            [item['email'] for item in unauthorized_result['items']],
+            ['pending@outlook.com'],
+        )
+        self.assertEqual(unauthorized_result['total'], 1)
+
+    def test_query_upload_accounts_treats_null_authorization_as_unauthorized(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            account = web_outlook_app.add_upload_account('null-status@outlook.com', 'p1')
+            db.execute(
+                'UPDATE outlook_upload_accounts SET is_authorized = NULL WHERE id = ?',
+                (account['id'],),
+            )
+            db.commit()
+
+            result = web_outlook_app.query_upload_accounts_page(
+                auth_status='unauthorized'
+            )
+
+        self.assertEqual([item['email'] for item in result['items']], [
+            'null-status@outlook.com'
+        ])
+        self.assertFalse(result['items'][0]['is_authorized'])
+
+    def test_query_upload_accounts_combines_keyword_and_authorization_status(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            pending = web_outlook_app.add_upload_account(
+                'shared-pending@outlook.com', 'p1', 'ordinary'
+            )
+            authorized_email = web_outlook_app.add_upload_account(
+                'shared-authorized@outlook.com', 'p2', 'ordinary'
+            )
+            authorized_remark = web_outlook_app.add_upload_account(
+                'other@outlook.com', 'p3', 'shared remark'
+            )
+            db.execute(
+                'UPDATE outlook_upload_accounts SET is_authorized = 1 WHERE id IN (?, ?)',
+                (authorized_email['id'], authorized_remark['id']),
+            )
+            db.commit()
+
+            result = web_outlook_app.query_upload_accounts_page(
+                page=1,
+                page_size=1,
+                keyword='shared',
+                auth_status='authorized',
+            )
+
+        self.assertEqual(result['total'], 2)
+        self.assertEqual(result['total_pages'], 2)
+        self.assertEqual(len(result['items']), 1)
+        self.assertTrue(result['items'][0]['is_authorized'])
+        self.assertNotEqual(result['items'][0]['id'], pending['id'])
+
+    def test_query_upload_accounts_normalizes_pagination_boundaries(self):
+        with self.app.app_context():
+            default_result = web_outlook_app.query_upload_accounts_page()
+            invalid_result = web_outlook_app.query_upload_accounts_page(
+                page='invalid', page_size='invalid'
+            )
+            negative_result = web_outlook_app.query_upload_accounts_page(
+                page=-10, page_size=-10
+            )
+            oversized_result = web_outlook_app.query_upload_accounts_page(
+                page=1, page_size=20000
+            )
+
+        self.assertEqual(default_result['page_size'], 20)
+        self.assertEqual(invalid_result['page'], 1)
+        self.assertEqual(invalid_result['page_size'], 20)
+        self.assertEqual(negative_result['page'], 1)
+        self.assertEqual(negative_result['page_size'], 1)
+        self.assertEqual(oversized_result['page_size'], 1000)
+
+    def test_query_upload_accounts_caps_large_pages_and_returns_passwords(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            encrypted_password = web_outlook_app.encrypt_data('capacity-secret')
+            db.executemany(
+                'INSERT INTO outlook_upload_accounts (email, password) VALUES (?, ?)',
+                [
+                    (f'capacity-{index}@outlook.com', encrypted_password)
+                    for index in range(1001)
+                ],
+            )
+            db.commit()
+
+            result = web_outlook_app.query_upload_accounts_page(page_size=20000)
+
+        self.assertEqual(result['total'], 1001)
+        self.assertEqual(result['page_size'], 1000)
+        self.assertEqual(len(result['items']), 1000)
+        self.assertTrue(all(item['password'] == 'capacity-secret' for item in result['items']))
+
+    def test_add_upload_account_stores_group_proxy_and_tag_ids(self):
+        with self.app.app_context():
+            group_id = web_outlook_app.add_group('上传目标分组')
+            self.assertIsNotNone(group_id)
+            tag_a = web_outlook_app.add_tag('上传标签A', '#111')
+            tag_b = web_outlook_app.add_tag('上传标签B', '#222')
+            self.assertIsNotNone(tag_a)
+            self.assertIsNotNone(tag_b)
+
+            result = web_outlook_app.add_upload_account(
+                'prefs@outlook.com',
+                'secret',
+                'with prefs',
+                group_id=group_id,
+                proxy_url=' socks5://user:pass@host:1080 ',
+                tag_ids=[tag_a, tag_b, 'bad', 0],
+            )
+            web_outlook_app.get_db().commit()
+            self.assertEqual(result['status'], 'added')
+            self.assertEqual(result['group_id'], group_id)
+            self.assertEqual(result['proxy_url'], 'socks5://user:pass@host:1080')
+            self.assertEqual(result['tag_ids'], [tag_a, tag_b])
+
+            row = web_outlook_app.get_db().execute(
+                'SELECT group_id, proxy_url, tag_ids FROM outlook_upload_accounts WHERE id = ?',
+                (result['id'],),
+            ).fetchone()
+            serialized = web_outlook_app.serialize_upload_account_row(row)
+
+        self.assertEqual(row['group_id'], group_id)
+        self.assertEqual(row['proxy_url'], 'socks5://user:pass@host:1080')
+        self.assertEqual(row['tag_ids'], f'{tag_a},{tag_b}')
+        self.assertEqual(serialized['group_id'], group_id)
+        self.assertEqual(serialized['proxy_url'], 'socks5://host:1080')
+        self.assertNotIn('user:pass', serialized['proxy_url'])
+        self.assertEqual(serialized['tag_ids'], [tag_a, tag_b])
+
+    def test_upload_account_proxy_display_hides_credentials_and_invalid_values(self):
+        self.assertEqual(
+            web_outlook_app.get_upload_account_proxy_display(
+                'http://user:secret@proxy.example:8080/path?token=value'
+            ),
+            'http://proxy.example:8080',
+        )
+        self.assertEqual(
+            web_outlook_app.get_upload_account_proxy_display('http://proxy.example:bad'),
+            '已配置代理',
+        )
+        self.assertEqual(web_outlook_app.get_upload_account_proxy_display(''), '')
+
+    def test_delete_upload_accounts_bulk_reports_counts(self):
+        with self.app.app_context():
+            a = web_outlook_app.add_upload_account('del-a@outlook.com', 'p1')
+            b = web_outlook_app.add_upload_account('del-b@outlook.com', 'p2')
+            web_outlook_app.get_db().commit()
+            summary = web_outlook_app.delete_upload_accounts_bulk(
+                [a['id'], b['id'], 999999]
+            )
+            web_outlook_app.get_db().commit()
+            remaining = web_outlook_app.get_db().execute(
+                'SELECT COUNT(*) AS cnt FROM outlook_upload_accounts'
+            ).fetchone()['cnt']
+
+        self.assertEqual(summary['total'], 3)
+        self.assertEqual(summary['deleted'], 2)
+        self.assertEqual(summary['not_found'], 1)
+        self.assertEqual(remaining, 0)
 
 
 class OutlookUploadRequeueTests(unittest.TestCase):
@@ -328,6 +535,10 @@ class OutlookUploadRouteTests(unittest.TestCase):
     def _headers(self):
         return {'X-API-Key': self.API_KEY}
 
+    def _login(self):
+        with self.client.session_transaction() as session:
+            session['logged_in'] = True
+
     def test_requires_api_key(self):
         response = self.client.post('/api/external/outlook/upload',
                                     json={'email': 'a@outlook.com', 'password': 'p'})
@@ -361,10 +572,14 @@ class OutlookUploadRouteTests(unittest.TestCase):
 
     def test_list_upload_accounts_returns_password_for_table_reveal(self):
         with self.app.app_context():
-            web_outlook_app.add_upload_account('list@outlook.com', 'secret', 'n')
+            web_outlook_app.add_upload_account(
+                'list@outlook.com',
+                'secret',
+                'n',
+                proxy_url='socks5://proxy-user:proxy-secret@proxy.example:1080',
+            )
             web_outlook_app.get_db().commit()
-        with self.client.session_transaction() as session:
-            session['logged_in'] = True
+        self._login()
 
         response = self.client.get('/api/outlook-upload-accounts')
         self.assertEqual(response.status_code, 200)
@@ -374,6 +589,8 @@ class OutlookUploadRouteTests(unittest.TestCase):
         self.assertEqual(item['password'], 'secret')
         self.assertTrue(item['has_password'])
         self.assertEqual(item['password_length'], len('secret'))
+        self.assertEqual(item['proxy_url'], 'socks5://proxy.example:1080')
+        self.assertNotIn('proxy-secret', response.get_data(as_text=True))
 
     def test_list_upload_accounts_tolerates_corrupted_encrypted_password(self):
         with self.app.app_context():
@@ -384,8 +601,7 @@ class OutlookUploadRouteTests(unittest.TestCase):
                 ('bad@outlook.com', 'enc:not-a-valid-token'),
             )
             db.commit()
-        with self.client.session_transaction() as session:
-            session['logged_in'] = True
+        self._login()
 
         response = self.client.get('/api/outlook-upload-accounts')
         self.assertEqual(response.status_code, 200)
@@ -395,7 +611,56 @@ class OutlookUploadRouteTests(unittest.TestCase):
         self.assertTrue(items['good@outlook.com']['has_password'])
         self.assertEqual(items['good@outlook.com']['password'], 'secret')
         self.assertFalse(items['bad@outlook.com']['has_password'])
+        self.assertEqual(items['bad@outlook.com']['password'], '')
         self.assertEqual(items['bad@outlook.com']['password_length'], 0)
+
+    def test_list_upload_accounts_filters_status_and_preserves_pagination_fields(self):
+        with self.app.app_context():
+            db = web_outlook_app.get_db()
+            web_outlook_app.add_upload_account('pending-route@outlook.com', 'p1')
+            authorized = web_outlook_app.add_upload_account(
+                'authorized-route@outlook.com', 'p2'
+            )
+            db.execute(
+                'UPDATE outlook_upload_accounts SET is_authorized = 1 WHERE id = ?',
+                (authorized['id'],),
+            )
+            db.commit()
+        self._login()
+
+        response = self.client.get(
+            '/api/outlook-upload-accounts?auth_status=authorized&page=1&page_size=100'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual([item['email'] for item in payload['items']], [
+            'authorized-route@outlook.com'
+        ])
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(payload['page'], 1)
+        self.assertEqual(payload['page_size'], 100)
+        self.assertEqual(payload['total_pages'], 1)
+
+    def test_list_upload_accounts_normalizes_route_pagination(self):
+        self._login()
+
+        invalid_response = self.client.get(
+            '/api/outlook-upload-accounts?page=invalid&page_size=invalid'
+        )
+        clamped_response = self.client.get(
+            '/api/outlook-upload-accounts?page=-10&page_size=20000'
+        )
+
+        self.assertEqual(invalid_response.status_code, 200)
+        invalid_payload = invalid_response.get_json()
+        self.assertEqual(invalid_payload['page'], 1)
+        self.assertEqual(invalid_payload['page_size'], 20)
+        self.assertEqual(clamped_response.status_code, 200)
+        clamped_payload = clamped_response.get_json()
+        self.assertEqual(clamped_payload['page'], 1)
+        self.assertEqual(clamped_payload['page_size'], 1000)
 
     def test_bulk_upload_reports_counts(self):
         response = self.client.post(
@@ -432,11 +697,11 @@ class OutlookUploadFrontendStructureTests(unittest.TestCase):
         js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
 
         self.assertNotIn('<th style="width: 42px; min-width: 42px;">ID</th>', html)
-        self.assertIn('<td colspan="7" class="upload-accounts-empty">正在加载...</td>', html)
+        self.assertIn('<td colspan="9" class="upload-accounts-empty">正在加载...</td>', html)
         self.assertIn('<tr class="upload-accounts-row--editing" data-editing-id="${escapeHtml(String(itemId))}">', js)
         self.assertNotIn('<td>${escapeHtml(String(itemId))}</td>', js)
-        self.assertIn('<tr><td colspan="7" class="upload-accounts-empty">暂无数据</td></tr>', js)
-        self.assertIn('<tr><td colspan="7" class="upload-accounts-empty">正在加载...</td></tr>', js)
+        self.assertIn('<tr><td colspan="9" class="upload-accounts-empty">暂无数据</td></tr>', js)
+        self.assertIn('<tr><td colspan="9" class="upload-accounts-empty">正在加载...</td></tr>', js)
 
     def test_upload_accounts_table_shows_tags_column(self):
         html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
@@ -445,6 +710,39 @@ class OutlookUploadFrontendStructureTests(unittest.TestCase):
         self.assertIn('<th style="width: 120px; min-width: 100px;">标签</th>', html)
         self.assertIn('function formatUploadAccountTags(tags)', js)
         self.assertIn('<td>${formatUploadAccountTags(item.tags)}</td>', js)
+
+    def test_upload_accounts_table_shows_escaped_account_proxy(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('<th style="width: 180px; min-width: 160px;">账号代理</th>', html)
+        self.assertIn('function getUploadAccountProxyDisplay(proxyUrl)', js)
+        self.assertIn('function formatUploadAccountProxy(proxyUrl)', js)
+        self.assertIn("parsedProxy.username = '';", js)
+        self.assertIn("parsedProxy.password = '';", js)
+        self.assertIn('const escapedProxy = escapeHtml(displayProxy);', js)
+        self.assertIn('title="${escapedProxy}"', js)
+        self.assertIn("if (!displayProxy) return '-';", js)
+        self.assertIn('${formatUploadAccountProxy(item.proxy_url)}', js)
+        self.assertNotIn('get_account_proxy_url', js)
+
+    def test_upload_accounts_authorization_status_filter_contract(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('id="uploadAccountsAuthStatusFilter"', html)
+        self.assertIn('<option value="all">全部</option>', html)
+        self.assertIn('<option value="unauthorized">未授权</option>', html)
+        self.assertIn('<option value="authorized">已授权</option>', html)
+        self.assertIn('authStatus: \'all\'', js)
+        self.assertIn('auth_status: uploadAccountsState.authStatus', js)
+        self.assertIn('function handleUploadAccountsAuthStatusChange(value)', js)
+        status_handler = js.split('function handleUploadAccountsAuthStatusChange(value)', 1)[1].split(
+            '\n        function handleUploadAccountsPageSizeChange', 1
+        )[0]
+        self.assertIn('uploadAccountsState.page = 1;', status_handler)
+        self.assertIn('clearUploadAccountSelection();', status_handler)
+        self.assertIn('loadUploadAccounts();', status_handler)
 
     def test_upload_accounts_table_alignment_rules(self):
         html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
@@ -465,13 +763,92 @@ class OutlookUploadFrontendStructureTests(unittest.TestCase):
 
         self.assertIn('min-height: 410px;', table_wrap_css)
         self.assertIn('table-layout: fixed;', table_css)
-        self.assertIn('min-width: 912px;', table_css)
+        self.assertIn('min-width: 1092px;', table_css)
+
+    def test_upload_accounts_page_size_options_match_account_list(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('id="uploadAccountsPageSizeSelect"', html)
+        for page_size in (100, 200, 500, 1000):
+            self.assertIn(f'<option value="{page_size}"', html)
+        for page_size in (2000, 5000, 10000):
+            self.assertNotIn(f'<option value="{page_size}"', html)
+        self.assertIn('<option value="200" selected>每页 200</option>', html)
+        self.assertIn('const UPLOAD_ACCOUNTS_PAGE_SIZE_DEFAULT = 200;', js)
+        self.assertIn('pageSize: UPLOAD_ACCOUNTS_PAGE_SIZE_DEFAULT', js)
+
+    def test_upload_accounts_only_applies_the_latest_list_response(self):
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn('requestSequence: 0', js)
+        load_function = js.split('async function loadUploadAccounts()', 1)[1].split(
+            '\n        function changeUploadAccountsPage', 1
+        )[0]
+        self.assertIn(
+            'const requestSequence = ++uploadAccountsState.requestSequence;',
+            load_function,
+        )
+        self.assertIn(
+            'if (requestSequence !== uploadAccountsState.requestSequence) return;',
+            load_function,
+        )
+        self.assertIn(
+            'if (requestSequence === uploadAccountsState.requestSequence)',
+            load_function,
+        )
+
+    def test_upload_accounts_page_size_preference_is_independent_and_normalized(self):
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        self.assertIn(
+            "const UPLOAD_ACCOUNTS_PAGE_SIZE_STORAGE_KEY = 'outlook_upload_account_page_size';",
+            js,
+        )
+        self.assertNotIn(
+            "UPLOAD_ACCOUNTS_PAGE_SIZE_STORAGE_KEY = 'outlook_account_page_size'",
+            js,
+        )
+        self.assertIn('function normalizeUploadAccountsPageSize(value)', js)
+        self.assertIn('return UPLOAD_ACCOUNTS_PAGE_SIZE_DEFAULT;', js)
+        self.assertIn('localStorage.getItem(UPLOAD_ACCOUNTS_PAGE_SIZE_STORAGE_KEY)', js)
+        self.assertIn('localStorage.setItem(', js)
+        page_size_handler = js.split('function handleUploadAccountsPageSizeChange(value)', 1)[1].split(
+            '\n        function searchUploadAccounts', 1
+        )[0]
+        self.assertIn('uploadAccountsState.page = 1;', page_size_handler)
+        self.assertIn('clearUploadAccountSelection();', page_size_handler)
+        self.assertIn('loadUploadAccounts();', page_size_handler)
+
+    def test_upload_accounts_clears_selection_when_filter_changes(self):
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+
+        auth_handler = js.split('function handleUploadAccountsAuthStatusChange(value)', 1)[1].split(
+            '\n        function handleUploadAccountsPageSizeChange', 1
+        )[0]
+        page_size_handler = js.split('function handleUploadAccountsPageSizeChange(value)', 1)[1].split(
+            '\n        function searchUploadAccounts', 1
+        )[0]
+        search_handler = js.split('function searchUploadAccounts()', 1)[1].split(
+            '\n        function reloadUploadAccounts', 1
+        )[0]
+
+        self.assertIn('clearUploadAccountSelection();', auth_handler)
+        self.assertIn('clearUploadAccountSelection();', page_size_handler)
+        self.assertIn('clearUploadAccountSelection();', search_handler)
+        # 翻页保留选择；仅筛选/搜索/每页数量变化时清空
+        page_handler = js.split('function changeUploadAccountsPage(delta)', 1)[1].split(
+            '\n        function handleUploadAccountsAuthStatusChange', 1
+        )[0]
+        self.assertNotIn('clearUploadAccountSelection();', page_handler)
 
     def test_table_password_uses_eye_toggle(self):
         js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
 
         self.assertIn('toggleUploadAccountPasswordVisibility', js)
         self.assertIn('data-upload-account-password', js)
+        self.assertIn('data-upload-account-password="${escapeHtml(plainPassword)}"', js)
+        self.assertNotIn('/password`', js)
         self.assertIn('upload-accounts-password-mask', js)
         self.assertIn('aria-label="显示密码"', js)
         self.assertIn("'隐藏密码'", js)
@@ -485,6 +862,123 @@ class OutlookUploadFrontendStructureTests(unittest.TestCase):
         auth_button_js = js[auth_button_start:auth_button_end]
         self.assertNotIn('data-upload-account-password', auth_button_js)
         self.assertNotIn('item.password ||', auth_button_js)
+
+    def test_upload_accounts_batch_ui_and_add_form_fields(self):
+        html = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'dialogs-management.html').read_text(encoding='utf-8')
+        js = (ROOT_DIR / 'static' / 'js' / 'index' / '12-outlook-upload-accounts.js').read_text(encoding='utf-8')
+        batch_js = (ROOT_DIR / 'static' / 'js' / 'index' / '10-batch-actions.js').read_text(encoding='utf-8')
+        layout = (ROOT_DIR / 'templates' / 'partials' / 'index' / 'layout.html').read_text(encoding='utf-8')
+
+        self.assertIn('id="addUploadAccountGroupSelect"', html)
+        self.assertIn('id="addUploadAccountTagDropdown"', html)
+        self.assertIn('id="addUploadAccountProxyUrl"', html)
+        self.assertIn('id="batchAuthorizeUploadAccountsBtn"', html)
+        self.assertIn('id="batchDeleteUploadAccountsBtn"', html)
+        self.assertIn('id="uploadAccountsSelectAllVisible"', html)
+        self.assertIn('onclick="authorizeSelectedUploadAccounts()"', html)
+        self.assertIn('onclick="deleteSelectedUploadAccounts()"', html)
+        self.assertIn('首次授权成功并新建正式账号', html)
+        add_form_start = html.index('id="addUploadAccountGroupSelect"')
+        add_form_end = html.index('id="submitAddUploadAccountBtn"', add_form_start)
+        add_form_html = html[add_form_start:add_form_end]
+        self.assertNotIn('回退代理', add_form_html)
+        self.assertNotIn('fallback', add_form_html.lower())
+
+        self.assertIn("group_id: groupId", js)
+        self.assertIn("proxy_url: proxyUrl", js)
+        self.assertIn("tag_ids: tagIds", js)
+        self.assertIn("authorizeSelectedUploadAccounts", js)
+        self.assertIn("deleteSelectedUploadAccounts", js)
+        self.assertIn('/api/outlook-upload-accounts/batch-delete', js)
+        self.assertIn('batchAuthQueue', js)
+
+        self.assertIn('id="batchOutlookAutoAuthBtn"', layout)
+        self.assertIn('queueSelectedAccountsForOutlookAutoAuth()', layout)
+        self.assertIn('/api/accounts/batch-outlook-auto-auth', batch_js)
+        self.assertIn('queueSelectedAccountsForOutlookAutoAuth', batch_js)
+
+
+class OutlookUploadBatchDeleteRouteTests(unittest.TestCase):
+    def setUp(self):
+        self.app = web_outlook_app.app
+        self.app.config['TESTING'] = True
+        self.app.config['WTF_CSRF_ENABLED'] = False
+        self.client = self.app.test_client()
+        with self.app.app_context():
+            web_outlook_app.init_db()
+            db = web_outlook_app.get_db()
+            db.execute('DELETE FROM outlook_upload_accounts')
+            clear_upload_management_fixtures(db)
+            db.commit()
+        with self.client.session_transaction() as session:
+            session['logged_in'] = True
+
+    def test_batch_delete_requires_account_ids(self):
+        response = self.client.post(
+            '/api/outlook-upload-accounts/batch-delete',
+            json={},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_batch_delete_removes_selected_accounts(self):
+        with self.app.app_context():
+            a = web_outlook_app.add_upload_account('batch-del-a@outlook.com', 'p1')
+            b = web_outlook_app.add_upload_account('batch-del-b@outlook.com', 'p2')
+            keep = web_outlook_app.add_upload_account('batch-del-keep@outlook.com', 'p3')
+            web_outlook_app.get_db().commit()
+
+        response = self.client.post(
+            '/api/outlook-upload-accounts/batch-delete',
+            json={'account_ids': [a['id'], b['id'], 999999]},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['deleted'], 2)
+        self.assertEqual(payload['not_found'], 1)
+
+        with self.app.app_context():
+            rows = web_outlook_app.get_db().execute(
+                'SELECT email FROM outlook_upload_accounts ORDER BY email'
+            ).fetchall()
+        self.assertEqual([row['email'] for row in rows], ['batch-del-keep@outlook.com'])
+        self.assertEqual(keep['email'], 'batch-del-keep@outlook.com')
+
+    def test_add_upload_account_route_accepts_group_tags_proxy(self):
+        with self.app.app_context():
+            group_id = web_outlook_app.add_group('路由目标分组')
+            tag_id = web_outlook_app.add_tag('路由标签', '#333')
+            self.assertIsNotNone(group_id)
+            self.assertIsNotNone(tag_id)
+
+        response = self.client.post(
+            '/api/outlook-upload-accounts',
+            json={
+                'email': 'route-prefs@outlook.com',
+                'password': 'route-secret',
+                'remark': 'via route',
+                'group_id': group_id,
+                'proxy_url': 'http://proxy.example:8080',
+                'tag_ids': [tag_id],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload['success'])
+        account = payload['account']
+        self.assertEqual(account['group_id'], group_id)
+        self.assertEqual(account['proxy_url'], 'http://proxy.example:8080')
+        self.assertEqual(account['tag_ids'], [tag_id])
+
+        with self.app.app_context():
+            row = web_outlook_app.get_db().execute(
+                'SELECT group_id, proxy_url, tag_ids FROM outlook_upload_accounts WHERE email = ?',
+                ('route-prefs@outlook.com',),
+            ).fetchone()
+        self.assertEqual(row['group_id'], group_id)
+        self.assertEqual(row['proxy_url'], 'http://proxy.example:8080')
+        self.assertEqual(row['tag_ids'], str(tag_id))
 
 
 class OutlookUploadUpdateRouteTests(unittest.TestCase):
